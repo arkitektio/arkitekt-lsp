@@ -62,7 +62,8 @@ def _applied(source: str, **kwargs: Any) -> str:
 def test_what_is_written_declares_the_demand_it_was_read_from(tmp_path: Path) -> None:
     offer = offer_of(AGENT)
     file = tmp_path / "written.py"
-    file.write_text(_applied(SOURCE, app=offer["app"], class_name="Stage", actions=offer["actions"], states=offer["states"]))
+    written = _applied(SOURCE, app=offer["app"], class_name="Stage", actions=offer["actions"], states=offer["states"])
+    file.write_text(written, encoding="utf-8")
 
     namespace = runpy.run_path(str(file), run_name="written")
 
