@@ -7,10 +7,10 @@ requires-python = ">=3.11"
 readme = "README.md"
 license = "MIT"
 # It runs in the app's own environment: a check imports the app with that
-# environment's arkitekt (`check --json-out`, with scopes and protocols since 11.2), and placing what it found
+# environment's arkitekt (`check --json-out`, with scopes and protocols since 11.2, the classes behind identifiers since 11.4), and placing what it found
 # parses the BSX with the spec (CatalogWarning.finding and BlokError.node, new in 6.0).
 dependencies = [
-    "arkitekt>=11.2",
+    "arkitekt>=11.4",
     "arkitekt-spec>=6.0",
     "pygls>=2.1",
     # Only for --connect (rekuest_read.py), and all of them arkitekt's already.
