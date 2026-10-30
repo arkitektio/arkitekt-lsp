@@ -7,9 +7,14 @@ It runs in the app's own environment (the editor starts that environment's ``ark
   modules behind must not take the server with it. A newer save stops the older check.
 - **What the check found** is published at the BSX it is about (:mod:`.placement`), in every file
   it names, and follows its blok as the code around it is edited.
-- **A blok edited since** is checked as it is typed (:mod:`.live`), in process and without the app.
-- ``bsx/regions`` hands a client the blok literals of a document, for what it does in them itself
-  (an editor's completion).
+- **A blok edited since** is checked as it is typed (:mod:`.live`), in process and without the app,
+  against the scope the check said it has (:mod:`.scopes`): its literal stays anchored to its blok.
+- ``bsx/regions`` hands a client the blok literals of a document, each with its blok's scope when a
+  check has seen it, for what it does in them itself (an editor's completion).
+
+All of that is local. Only with ``--connect`` (``arkitekt.server.connect``) does it also ask rekuest,
+read-only, who would satisfy each dependency the app declares (:mod:`.connected`): a count above the
+protocol, a warning when nobody does, the agents on hover.
 
 Which app a file belongs to: the file itself when it declares one (``App(``), else the
 ``target`` setting, else the project's default (``ARKITEKT_APP``, or ``app.py``). A project is the
@@ -24,7 +29,7 @@ import os
 import re
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
@@ -35,9 +40,21 @@ from pygls.lsp.server import LanguageServer
 from pygls.uris import from_fs_path, to_fs_path
 from pygls.workspace import TextDocument
 
+from arkitekt_lsp.connected import (
+    DEFAULT_URL,
+    Availability,
+    Connection,
+    class_span,
+    declared_protocols,
+    dependency_key_at,
+    hover_markdown,
+    lens_title,
+    problem,
+)
 from arkitekt_lsp.live import live_findings
 from arkitekt_lsp.placement import Span, place
-from arkitekt_lsp.regions import blok_literals
+from arkitekt_lsp.regions import BlokLiteral, blok_literals
+from arkitekt_lsp.scopes import Anchors, anchor_bloks, blok_of
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +62,11 @@ CHECK_SOURCE = "arkitekt check"
 """The source of what the check found: as the app sees it."""
 LIVE_SOURCE = "bsx"
 """The source of what an edited blok says about itself: as typed."""
+REKUEST_SOURCE = "rekuest"
+"""The source of what the server said about a dependency: connected only."""
+REKUEST_STATUS = "arkitekt/rekuest"
+"""Told to the client whenever the connection changes."""
+REKUEST_REFRESH = "arkitekt/rekuest/refresh"
 STATUS = "arkitekt/status"
 """Told to the client whenever a check starts or ends."""
 REGIONS = "bsx/regions"
@@ -71,6 +93,11 @@ class Settings:
     check_on_save: bool = True
     timeout: float = 120.0
     target: str | None = None
+    connect: bool = False
+    """Ask rekuest about dependencies. Off, the server talks to nothing."""
+    server_url: str = DEFAULT_URL
+    server_from_flags: bool = False
+    """``--connect`` or ``--server`` was given: what the editor configures does not move it."""
 
     def update(self, options: Any) -> None:  # noqa: ANN401 - LSPAny
         if not isinstance(options, dict):
@@ -84,6 +111,12 @@ class Settings:
             self.timeout = float(options["timeout"])
         if "target" in options:
             self.target = options["target"] or None
+        server = options.get("server")
+        if isinstance(server, dict) and not self.server_from_flags:
+            if isinstance(server.get("connect"), bool):
+                self.connect = server["connect"]
+            if isinstance(server.get("url"), str):
+                self.server_url = server["url"].strip() or DEFAULT_URL
 
 
 @dataclass(frozen=True)
@@ -100,8 +133,16 @@ class CheckKey:
 @dataclass
 class CheckState:
     report: dict[str, Any] | None = None
+    """The last report: what is wrong now."""
+    last_good: dict[str, Any] | None = None
+    """The last report of a check that got through: what the app declares. A check that fails
+    knows no bloks, and a broken save is when a blok's scope is needed most."""
     located: dict[str, set[str]] | None = None
     """Per file (real path), the bloks whose source was one of its literals when the report came."""
+    anchors: dict[str, Anchors] | None = None
+    """Per file (real path), the blok each of its literals held when the report came."""
+    availability: dict[str, Availability] = field(default_factory=dict[str, Availability])
+    """Per protocol the report lists, by name, who the server said would satisfy it."""
     process: asyncio.subprocess.Process | None = None
     generation: int = 0
 
@@ -130,6 +171,8 @@ class ArkitektLanguageServer(LanguageServer):
         self.pending: dict[str, asyncio.TimerHandle] = {}
         self.one_at_a_time = asyncio.Semaphore(1)
         """Checks import whole apps (torch, CUDA): opening many app files queues them, newest kept."""
+        self.connection: Connection | None = None
+        """The read-only login, when connecting was asked for."""
 
     # -- which app
 
@@ -221,7 +264,12 @@ class ArkitektLanguageServer(LanguageServer):
             report = json.loads(out.read_text())
         state.report = report
         state.located = self.locate(report)
+        if report.get("ok"):
+            state.last_good = report
+            state.anchors = self.anchor(report)
         self.refresh_all()
+        if self.connection is not None:
+            asyncio.ensure_future(self.ask_about(state))
         diagnostics = report.get("diagnostics", [])
         unplaced = [d["message"] for d in diagnostics if not d.get("file") or not Path(d["file"]).exists()]
         self.status(
@@ -250,6 +298,113 @@ class ArkitektLanguageServer(LanguageServer):
                 values = {literal.value for literal in blok_literals(text)}
                 located[path] = {key for key, source in bloks.items() if source in values}
         return located
+
+    def anchor(self, report: dict[str, Any]) -> dict[str, Anchors]:
+        """Per file the report's bloks were declared in, the blok each of its literals holds now."""
+        anchors: dict[str, Anchors] = {}
+        for blok in report.get("bloks", []):
+            file = blok.get("file")
+            if not isinstance(file, str) or "scope" not in blok:
+                continue
+            path = os.path.realpath(file)
+            if path in anchors:
+                continue
+            uri = from_fs_path(file)
+            try:
+                text = self.workspace.get_text_document(uri).source if uri else Path(file).read_text()
+            except OSError:
+                continue
+            anchors[path] = anchor_bloks(text, blok_literals(text), path, report)
+        return anchors
+
+    def scope_of(self, path: str, literals: list[BlokLiteral], index: int) -> tuple[str, dict[str, Any]] | None:
+        """The blok the ``index``-th literal of the file at real ``path`` is and its scope, if a check saw it."""
+        for state in self.checks.values():
+            if state.last_good is None:
+                continue
+            records = {blok["blok"]: blok for blok in state.last_good.get("bloks", []) if "scope" in blok}
+            sources = {key: blok["source"] for key, blok in records.items() if "source" in blok}
+            key = blok_of(literals, index, (state.anchors or {}).get(path), sources)
+            if key is not None and key in records:
+                return key, records[key]["scope"]
+        return None
+
+    # -- the server (connected only)
+
+    def connection_status(self, state: str, message: str | None = None) -> None:
+        url = self.connection.url if self.connection is not None else self.settings.server_url
+        self.protocol.notify(REKUEST_STATUS, {"state": state, "url": url, "message": message})
+
+    async def show_login(self, challenge: Any) -> None:  # noqa: ANN401 - fakts' DeviceCodeChallenge
+        """Offer the login in the editor; opening it is the user's click, and waiting is not on them."""
+
+        async def offer() -> None:
+            chosen = await self.window_show_message_request_async(
+                types.ShowMessageRequestParams(
+                    type=types.MessageType.Info,
+                    message=f"Arkitekt: approve read-only access for this editor (code {challenge.user_code}).",
+                    actions=[types.MessageActionItem(title="Open")],
+                )
+            )
+            if chosen is not None:
+                await self.window_show_document_async(
+                    types.ShowDocumentParams(uri=challenge.verification_uri_complete, external=True)
+                )
+
+        asyncio.ensure_future(offer())
+
+    async def connect_as_configured(self) -> None:
+        """Make the connection what the settings say: none, or one to their server."""
+        wanted = self.settings.server_url if self.settings.connect else None
+        current = self.connection
+        if current is not None and current.url == wanted:
+            return
+        if current is not None:
+            self.connection = None
+            await current.stop()
+            for state in self.checks.values():
+                state.availability = {}
+            self.refresh_all()
+            self.connection_status("off")
+        if wanted is None:
+            return
+        connection = Connection(wanted, self.connection_status, self.show_login, __version__)
+        self.connection = connection
+        await connection.start()
+        if self.connection is not connection:  # turned off or moved while the login was pending
+            await connection.stop()
+            return
+        for state in self.checks.values():
+            await self.ask_about(state)
+
+    async def ask_about(self, state: CheckState) -> None:
+        """Ask the server about every protocol ``state``'s report lists, and tell what it said."""
+        connection = self.connection
+        if connection is None or state.last_good is None:
+            return
+        answers: dict[str, Availability] = {}
+        for protocol in declared_protocols(state.last_good):
+            answer = await connection.availability(protocol["dependency"])
+            if answer is not None:
+                answers[protocol["name"]] = answer
+        state.availability = answers
+        self.refresh_all()
+        capabilities = self.protocol.client_capabilities.workspace
+        if capabilities is not None and capabilities.code_lens is not None and capabilities.code_lens.refresh_support:
+            self.workspace_code_lens_refresh(None)
+
+    def about_protocols(self, path: str, text: str) -> list[tuple[tuple[int, int], dict[str, Any], Availability]]:
+        """The protocols declared in the file at real ``path``, where each is now and what was said."""
+        found: list[tuple[tuple[int, int], dict[str, Any], Availability]] = []
+        for state in self.checks.values():
+            for protocol in declared_protocols(state.last_good or {}):
+                file, answer = protocol.get("file"), state.availability.get(protocol["name"])
+                if not isinstance(file, str) or answer is None or os.path.realpath(file) != path:
+                    continue
+                span = class_span(text, protocol["name"])
+                if span is not None:
+                    found.append((span, dict(protocol), answer))
+        return found
 
     def schedule_check(self, uri: str) -> None:
         key = self.check_key(uri)
@@ -318,10 +473,11 @@ class ArkitektLanguageServer(LanguageServer):
                         )
                     )
             if self.is_open(uri):
-                for literal in literals:
+                for index, literal in enumerate(literals):
                     if literal.value in checked:
                         continue  # as the check saw it: the check has said it
-                    for finding in live_findings(literal):
+                    known = self.scope_of(path, literals, index)
+                    for finding in live_findings(literal, known[1] if known is not None else None):
                         if (finding.code, finding.span) in told:
                             continue
                         diagnostics.append(
@@ -335,6 +491,12 @@ class ArkitektLanguageServer(LanguageServer):
                                 LIVE_SOURCE,
                             )
                         )
+            for span, protocol, answer in self.about_protocols(path, text):
+                said = problem(protocol["dependency"], answer)
+                if said is not None:
+                    diagnostics.append(
+                        self.diagnostic(document, span, said[0], "rekuest.dependency", said[1], None, REKUEST_SOURCE)
+                    )
         if not diagnostics and unquote(uri) not in self.published:
             return
         self.text_document_publish_diagnostics(types.PublishDiagnosticsParams(uri=uri, diagnostics=diagnostics))
@@ -366,23 +528,32 @@ class ArkitektLanguageServer(LanguageServer):
     # -- regions
 
     def regions(self, uri: str) -> list[dict[str, object]]:
-        """The blok literals of ``uri``, in client positions: where a client may treat text as BSX."""
+        """The blok literals of ``uri``, in client positions: where a client may treat text as BSX.
+
+        A literal a check has seen carries its ``blok`` and ``scope`` (``BlokCheckScope``), what
+        its references complete against; one no check has seen carries neither.
+        """
         document = self.workspace.get_text_document(uri)
+        fs_path = to_fs_path(uri)
+        path = os.path.realpath(fs_path) if fs_path is not None else None
+        literals = blok_literals(document.source)
         found: list[dict[str, object]] = []
-        for literal in blok_literals(document.source):
+        for index, literal in enumerate(literals):
             start = document.client_position_at_offset(literal.start)
             end = document.client_position_at_offset(literal.end)
-            found.append(
-                {
-                    "start": {"line": start.line, "character": start.character},
-                    "end": {"line": end.line, "character": end.character},
-                    "value": literal.value,
-                    "root": literal.root,
-                    "context": literal.context,
-                    "kind": literal.kind,
-                    "exact": literal.exact,
-                }
-            )
+            region: dict[str, object] = {
+                "start": {"line": start.line, "character": start.character},
+                "end": {"line": end.line, "character": end.character},
+                "value": literal.value,
+                "root": literal.root,
+                "context": literal.context,
+                "kind": literal.kind,
+                "exact": literal.exact,
+            }
+            known = self.scope_of(path, literals, index) if path is not None else None
+            if known is not None:
+                region["blok"], region["scope"] = known
+            found.append(region)
         return found
 
 
@@ -394,10 +565,16 @@ def initialize(ls: ArkitektLanguageServer, params: types.InitializeParams) -> No
     ls.settings.update(params.initialization_options)
 
 
+@server.feature(types.INITIALIZED)
+async def initialized(ls: ArkitektLanguageServer, params: types.InitializedParams) -> None:
+    await ls.connect_as_configured()
+
+
 @server.feature(types.WORKSPACE_DID_CHANGE_CONFIGURATION)
-def did_change_configuration(ls: ArkitektLanguageServer, params: types.DidChangeConfigurationParams) -> None:
+async def did_change_configuration(ls: ArkitektLanguageServer, params: types.DidChangeConfigurationParams) -> None:
     settings = params.settings
     ls.settings.update(settings.get("arkitekt") if isinstance(settings, dict) else None)
+    await ls.connect_as_configured()
 
 
 @server.feature(types.TEXT_DOCUMENT_DID_OPEN)
@@ -427,6 +604,63 @@ def did_close(ls: ArkitektLanguageServer, params: types.DidCloseTextDocumentPara
     ls.refresh(params.text_document.uri)
 
 
+@server.feature(types.TEXT_DOCUMENT_CODE_LENS)
+def code_lens(ls: ArkitektLanguageServer, params: types.CodeLensParams) -> list[types.CodeLens]:
+    """Above each protocol, how many agents would satisfy it. Nothing unless connected."""
+    uri = params.text_document.uri
+    fs_path = to_fs_path(uri)
+    if ls.connection is None or fs_path is None:
+        return []
+    document = ls.workspace.get_text_document(uri)
+    lenses: list[types.CodeLens] = []
+    for span, _, answer in ls.about_protocols(os.path.realpath(fs_path), document.source):
+        at = document.client_position_at_offset(span[0])
+        lenses.append(
+            types.CodeLens(
+                range=types.Range(start=at, end=at),
+                command=types.Command(title=lens_title(answer), command="arkitekt.rekuest.refresh"),
+            )
+        )
+    return lenses
+
+
+@server.feature(types.TEXT_DOCUMENT_HOVER)
+async def hover(ls: ArkitektLanguageServer, params: types.HoverParams) -> types.Hover | None:
+    """On a protocol's name or a blok's ``deps.<key>``: the agents that would satisfy it."""
+    connection = ls.connection
+    fs_path = to_fs_path(params.text_document.uri)
+    if connection is None or fs_path is None:
+        return None
+    document = ls.workspace.get_text_document(params.text_document.uri)
+    offset = document.offset_at_position(params.position)
+    path = os.path.realpath(fs_path)
+    for span, protocol, answer in ls.about_protocols(path, document.source):
+        if span[0] <= offset <= span[1]:
+            return types.Hover(contents=types.MarkupContent(kind=types.MarkupKind.Markdown, value=hover_markdown(protocol["name"], answer)))
+    literals = blok_literals(document.source)
+    for index, literal in enumerate(literals):
+        inside = literal.to_value(offset)
+        key = dependency_key_at(literal.value, inside) if inside is not None else None
+        known = ls.scope_of(path, literals, index) if key is not None else None
+        if known is None:
+            continue
+        dependency = next((d for d in known[1].get("dependencies") or () if d.get("key") == key), None)
+        answer = await connection.availability(dependency) if dependency is not None else None
+        if answer is not None:
+            return types.Hover(contents=types.MarkupContent(kind=types.MarkupKind.Markdown, value=hover_markdown(f"deps.{key}", answer)))
+    return None
+
+
+@server.feature(REKUEST_REFRESH)
+async def rekuest_refresh(ls: ArkitektLanguageServer, params: Any) -> None:  # noqa: ANN401 - a custom notification
+    """Ask the server again instead of waiting for the answers to age."""
+    if ls.connection is None:
+        return
+    ls.connection.forget()
+    for state in ls.checks.values():
+        await ls.ask_about(state)
+
+
 @server.feature(REGIONS)
 def regions(ls: ArkitektLanguageServer, params: Any) -> dict[str, object]:  # noqa: ANN401 - a custom request
     return {"regions": ls.regions(params.textDocument.uri)}
@@ -453,7 +687,24 @@ def main() -> None:
     )
     parser.add_argument("--stdio", action="store_true", help="Serve over stdin/stdout (the default).")
     parser.add_argument("--version", action="version", version=f"arkitekt-lsp {__version__}")
-    parser.parse_args()
+    parser.add_argument(
+        "--connect",
+        action="store_true",
+        help="Also ask rekuest, read-only, who would satisfy each dependency the app declares. Off by default: "
+        "the server then talks to nothing.",
+    )
+    parser.add_argument(
+        "--server",
+        default=None,
+        metavar="URL",
+        help=f"The coordination server to connect to; implies --connect (default: {DEFAULT_URL}). "
+        "Either flag overrides what the editor configures.",
+    )
+    args = parser.parse_args()
+    server.settings.connect = args.connect or bool(args.server)
+    server.settings.server_from_flags = server.settings.connect
+    if args.server:
+        server.settings.server_url = args.server
     logging.basicConfig(level=logging.INFO, stream=sys.stderr)
     server.start_io()
 

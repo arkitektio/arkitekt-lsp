@@ -245,7 +245,10 @@ source = { editable = "." }
 dependencies = [
     { name = "arkitekt" },
     { name = "arkitekt-spec" },
+    { name = "fakts" },
+    { name = "koil" },
     { name = "pygls" },
+    { name = "rath" },
 ]
 
 [package.dev-dependencies]
@@ -261,7 +264,10 @@ dev = [
 requires-dist = [
     { name = "arkitekt", specifier = ">=11.1" },
     { name = "arkitekt-spec", specifier = ">=6.0" },
+    { name = "fakts", specifier = ">=6.1" },
+    { name = "koil", specifier = ">=3.3.6" },
     { name = "pygls", specifier = ">=2.1" },
+    { name = "rath", specifier = ">=4" },
 ]
 
 [package.metadata.requires-dev]

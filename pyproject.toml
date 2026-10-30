@@ -13,6 +13,10 @@ dependencies = [
     "arkitekt>=11.1",
     "arkitekt-spec>=6.0",
     "pygls>=2.1",
+    # Only for --connect (rekuest_read.py), and all of them arkitekt's already.
+    "fakts>=6.1",
+    "koil>=3.3.6",
+    "rath>=4",
 ]
 
 [project.scripts]
