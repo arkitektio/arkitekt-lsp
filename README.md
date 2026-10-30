@@ -39,6 +39,11 @@ would satisfy it, nothing registered, so a protocol you just wrote is asked abou
 
 A login nobody approves or a server that is gone leaves the server local, and says so.
 
+An editor can start this itself: the notification `arkitekt/rekuest/login` (`{url?}`) connects now,
+also after a failure, and the request `arkitekt/rekuest/logout` leaves, revokes the login and forgets
+it (`{forgotten}`). One that sets `clientShowsLogin` in its initialization options is told
+`arkitekt/rekuest/challenge` (`{url, code, link, expiresIn}`) instead of getting a plain message.
+
 Which app: the saved file when it declares one (`App(`), else the `arkitekt.target` setting, else
 the project's default (`ARKITEKT_APP`, or `app.py`). A project is the nearest directory with a
 `pyproject.toml`.

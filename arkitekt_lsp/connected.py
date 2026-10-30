@@ -211,6 +211,8 @@ class Connection:
         self.version = version
         self.runtime: Any = None
         self.client: RekuestRead | None = None
+        self.pending: asyncio.Future[Any] | None = None
+        """The login under way: what giving up on it cancels."""
         self.answers: dict[str, tuple[float, Availability]] = {}
 
     @property
@@ -233,18 +235,28 @@ class Connection:
             runtime = connect(
                 lsp_app(self.version), url=self.url, headless=True, device_code_hook=self._show_login, mesh=False
             )
-            await asyncio.wait_for(runtime.__aenter__(), LOGIN_TIMEOUT)
+            self.pending = asyncio.ensure_future(asyncio.wait_for(runtime.__aenter__(), LOGIN_TIMEOUT))
+            await self.pending
+        except asyncio.CancelledError:
+            if self.pending is None:  # stop() gave up on it
+                return
+            raise
         except Exception as error:  # noqa: BLE001 - whatever it was, the server stays local
             logger.warning("Could not connect to %s: %s", self.url, error)
+            self.pending = None
             self.status("offline", message=f"{type(error).__name__}: {error}" if str(error) else type(error).__name__)
             return
+        self.pending = None
         self.runtime = runtime
         self.client = runtime.require(RekuestRead)
         self.status("connected")
 
     async def stop(self) -> None:
         runtime, self.runtime, self.client = self.runtime, None, None
+        pending, self.pending = self.pending, None
         self.answers.clear()
+        if pending is not None:
+            pending.cancel()
         if runtime is not None:
             try:
                 await runtime.__aexit__(None, None, None)
@@ -287,6 +299,15 @@ class Connection:
         return answer
 
 
+def forget_login(url: str, version: str = "0.0.0") -> bool:
+    """Revoke the login at ``url`` and forget it here; whether there was one. Blocks: a thread's work."""
+    from arkitekt import logout
+
+    from arkitekt_lsp.rekuest_read import lsp_app
+
+    return logout(lsp_app(version), url=url)
+
+
 def declared_protocols(report: Mapping[str, Any]) -> Sequence[Mapping[str, Any]]:
     """The report's dependency protocols; a version 1 report has none."""
     return report.get("protocols") or ()
@@ -301,6 +322,7 @@ __all__ = [
     "declared_protocols",
     "dependency_key_at",
     "filters_for",
+    "forget_login",
     "hover_markdown",
     "lens_title",
     "problem",

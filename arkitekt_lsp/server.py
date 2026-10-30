@@ -47,6 +47,7 @@ from arkitekt_lsp.connected import (
     class_span,
     declared_protocols,
     dependency_key_at,
+    forget_login,
     hover_markdown,
     lens_title,
     problem,
@@ -67,6 +68,12 @@ REKUEST_SOURCE = "rekuest"
 REKUEST_STATUS = "arkitekt/rekuest"
 """Told to the client whenever the connection changes."""
 REKUEST_REFRESH = "arkitekt/rekuest/refresh"
+REKUEST_LOGIN = "arkitekt/rekuest/login"
+"""Taken from the client: log in now, at ``url`` if it names one."""
+REKUEST_LOGOUT = "arkitekt/rekuest/logout"
+"""Asked by the client: leave, revoke the login and forget it."""
+REKUEST_CHALLENGE = "arkitekt/rekuest/challenge"
+"""Told to a client that shows the login itself: what to approve, and where."""
 STATUS = "arkitekt/status"
 """Told to the client whenever a check starts or ends."""
 REGIONS = "bsx/regions"
@@ -98,6 +105,8 @@ class Settings:
     server_url: str = DEFAULT_URL
     server_from_flags: bool = False
     """``--connect`` or ``--server`` was given: what the editor configures does not move it."""
+    client_shows_login: bool = False
+    """The client said so at initialization: it gets the challenge, not a plain message."""
 
     def update(self, options: Any) -> None:  # noqa: ANN401 - LSPAny
         if not isinstance(options, dict):
@@ -111,6 +120,8 @@ class Settings:
             self.timeout = float(options["timeout"])
         if "target" in options:
             self.target = options["target"] or None
+        if options.get("clientShowsLogin") is True:
+            self.client_shows_login = True
         server = options.get("server")
         if isinstance(server, dict) and not self.server_from_flags:
             if isinstance(server.get("connect"), bool):
@@ -337,6 +348,18 @@ class ArkitektLanguageServer(LanguageServer):
 
     async def show_login(self, challenge: Any) -> None:  # noqa: ANN401 - fakts' DeviceCodeChallenge
         """Offer the login in the editor; opening it is the user's click, and waiting is not on them."""
+        if self.settings.client_shows_login:
+            url = self.connection.url if self.connection is not None else self.settings.server_url
+            self.protocol.notify(
+                REKUEST_CHALLENGE,
+                {
+                    "url": url,
+                    "code": challenge.user_code,
+                    "link": challenge.verification_uri_complete,
+                    "expiresIn": challenge.expires_in,
+                },
+            )
+            return
 
         async def offer() -> None:
             chosen = await self.window_show_message_request_async(
@@ -376,6 +399,33 @@ class ArkitektLanguageServer(LanguageServer):
             return
         for state in self.checks.values():
             await self.ask_about(state)
+
+    async def log_in(self, url: str | None = None) -> None:
+        """Connect because the user asked, also where the settings alone would change nothing: a
+        connection that failed keeps its url, and only asking again gives it another go."""
+        self.settings.connect = True
+        if url:
+            self.settings.server_url = url.strip() or DEFAULT_URL
+        current = self.connection
+        if current is not None and current.url == self.settings.server_url:
+            if current.connected:
+                self.connection_status("connected")
+                return
+            if current.pending is not None:
+                return
+            self.connection = None
+            await current.stop()
+        await self.connect_as_configured()
+
+    async def log_out(self) -> bool:
+        """Leave, then revoke and forget the login; whether there was one. In that order: a run still
+        going would write the session back when its token rotates."""
+        url = self.connection.url if self.connection is not None else self.settings.server_url
+        self.settings.connect = False
+        await self.connect_as_configured()
+        forgotten = await asyncio.to_thread(forget_login, url, __version__)
+        self.connection_status("off")
+        return forgotten
 
     async def ask_about(self, state: CheckState) -> None:
         """Ask the server about every protocol ``state``'s report lists, and tell what it said."""
@@ -659,6 +709,16 @@ async def rekuest_refresh(ls: ArkitektLanguageServer, params: Any) -> None:  # n
     ls.connection.forget()
     for state in ls.checks.values():
         await ls.ask_about(state)
+
+
+@server.feature(REKUEST_LOGIN)
+async def rekuest_login(ls: ArkitektLanguageServer, params: Any) -> None:  # noqa: ANN401 - a custom notification
+    await ls.log_in(getattr(params, "url", None))
+
+
+@server.feature(REKUEST_LOGOUT)
+async def rekuest_logout(ls: ArkitektLanguageServer, params: Any) -> dict[str, bool]:  # noqa: ANN401 - a custom request
+    return {"forgotten": await ls.log_out()}
 
 
 @server.feature(REGIONS)

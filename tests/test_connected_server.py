@@ -177,3 +177,75 @@ def test_hovering_a_dependency_in_a_blok_asks_about_what_its_scope_says(served: 
 
     assert answer is not None and "deps.lab" in answer.contents.value
     assert connection.asked == [DEPENDENCY]
+
+
+class FakeLogin:
+    """A connection whose login goes as the test says, and that says what was done to it."""
+
+    made: list["FakeLogin"] = []
+
+    def __init__(self, url: str, status: Any, login: Any, version: str = "0") -> None:
+        self.url, self.connected, self.pending, self.stopped = url, False, None, False
+        FakeLogin.made.append(self)
+
+    async def start(self) -> None: ...
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+    async def availability(self, dependency: dict[str, Any]) -> None:
+        return None
+
+
+def test_logging_in_after_a_failure_tries_again_where_the_settings_alone_would_not(
+    served: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ls, _, _ = served
+    FakeLogin.made = []
+    monkeypatch.setattr("arkitekt_lsp.server.Connection", FakeLogin)
+    monkeypatch.setattr(ls.protocol, "notify", lambda *_: None)
+    ls.settings.connect = True
+
+    asyncio.run(ls.connect_as_configured())
+    asyncio.run(ls.connect_as_configured())
+    assert len(FakeLogin.made) == 1
+
+    asyncio.run(ls.log_in())
+    assert len(FakeLogin.made) == 2 and FakeLogin.made[0].stopped
+
+
+def test_logging_out_ends_the_run_before_it_forgets_the_login(served: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    ls, _, _ = served
+    told: list[tuple[str, Any]] = []
+    monkeypatch.setattr(ls.protocol, "notify", lambda method, params: told.append((method, params)))
+    connection = FakeLogin("https://hub", None, None)
+    ls.connection = connection
+    ls.settings.connect, ls.settings.server_url = True, "https://hub"
+
+    def forget(url: str, version: str) -> bool:
+        assert connection.stopped, "a run still going would write the session back"
+        assert url == "https://hub"
+        return True
+
+    monkeypatch.setattr("arkitekt_lsp.server.forget_login", forget)
+
+    assert asyncio.run(ls.log_out()) is True
+    assert ls.connection is None and ls.settings.connect is False
+    assert told[-1][1]["state"] == "off"
+
+
+def test_a_client_that_shows_the_login_is_told_the_challenge(served: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    ls, _, _ = served
+    told: list[tuple[str, Any]] = []
+    monkeypatch.setattr(ls.protocol, "notify", lambda method, params: told.append((method, params)))
+    ls.settings.update({"clientShowsLogin": True})
+    challenge = SimpleNamespace(user_code="AB-CD", verification_uri_complete="https://hub/ok?code=AB-CD", expires_in=600)
+
+    asyncio.run(ls.show_login(challenge))
+
+    assert told == [
+        (
+            "arkitekt/rekuest/challenge",
+            {"url": DEFAULT_URL, "code": "AB-CD", "link": "https://hub/ok?code=AB-CD", "expiresIn": 600},
+        )
+    ]
