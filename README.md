@@ -53,7 +53,10 @@ it (`{forgotten}`). One that sets `clientShowsLogin` in its initialization optio
 
 Which app: the saved file when it declares one (`App(`), else the `arkitekt.target` setting, else
 the project's default (`ARKITEKT_APP`, or `app.py`). A project is the nearest directory with a
-`pyproject.toml`.
+`pyproject.toml`. A file with several `App`s and none named `app` needs a target that names one
+(`many.py:api`), which then wins for that file. Changing the target checks the open files again.
+The request `arkitekt/apps` (`{}` → `{apps: [{target, file, line, project}], target}`) lists the
+apps of the workspace, by reading its files without importing any, for a client to offer.
 
 Settings (initialization options, or `workspace/didChangeConfiguration` under `arkitekt`):
 `check.onSave` (default true), `check.timeout` (seconds, default 120), `target`.

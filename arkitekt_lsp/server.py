@@ -16,9 +16,10 @@ All of that is local. Only with ``--connect`` (``arkitekt.server.connect``) does
 read-only, who would satisfy each dependency the app declares (:mod:`.connected`): a count above the
 protocol, a warning when nobody does, the agents on hover.
 
-Which app a file belongs to: the file itself when it declares one (``App(``), else the
-``target`` setting, else the project's default (``ARKITEKT_APP``, or ``app.py``). A project is the
-nearest directory with a ``pyproject.toml``.
+Which app a file belongs to: the file itself when it declares one (``App(``), by the ``target``
+setting if that names the file (``many.py:api``), else the ``target`` setting, else the project's
+default (``ARKITEKT_APP``, or ``app.py``). A project is the nearest directory with a
+``pyproject.toml``. ``arkitekt/apps`` lists what there is to choose from.
 """
 
 import argparse
@@ -26,7 +27,6 @@ import asyncio
 import json
 import logging
 import os
-import re
 import sys
 import tempfile
 from dataclasses import dataclass, field
@@ -40,6 +40,7 @@ from pygls.lsp.server import LanguageServer
 from pygls.uris import from_fs_path, to_fs_path
 from pygls.workspace import TextDocument
 
+from arkitekt_lsp.apps import DECLARES_APP, find_apps, names_file, project_root
 from arkitekt_lsp.connected import (
     DEFAULT_URL,
     Availability,
@@ -91,10 +92,11 @@ REKUEST_CHALLENGE = "arkitekt/rekuest/challenge"
 """Told to a client that shows the login itself: what to approve, and where."""
 STATUS = "arkitekt/status"
 """Told to the client whenever a check starts or ends."""
+APPS = "arkitekt/apps"
+"""Asked by the client: the apps of the workspace, to choose from."""
 REGIONS = "bsx/regions"
 CHECK = "arkitekt/check"
 
-_DECLARES_APP = re.compile(r"^[^#\n]*\b(?:Qt)?App\s*(?:\[[^\]\n]*\])?\s*\(", re.MULTILINE)
 _SEVERITY = {
     "error": types.DiagnosticSeverity.Error,
     "warning": types.DiagnosticSeverity.Warning,
@@ -177,17 +179,6 @@ class CheckState:
     generation: int = 0
 
 
-def project_root(path: Path, folders: list[Path]) -> Path:
-    """The nearest directory of ``path`` with a ``pyproject.toml``, within a workspace folder."""
-    folder = next((folder for folder in folders if path.is_relative_to(folder)), None)
-    for directory in path.parents:
-        if (directory / "pyproject.toml").exists():
-            return directory
-        if folder is not None and directory == folder:
-            return folder
-    return folder or path.parent
-
-
 class ArkitektLanguageServer(LanguageServer):
     """See the module: the check, its placement and the live layer, for one editor."""
 
@@ -225,8 +216,11 @@ class ArkitektLanguageServer(LanguageServer):
             text = self.workspace.get_text_document(uri).source
         except OSError:
             return None
-        if _DECLARES_APP.search(text) and path.is_relative_to(root):
-            return CheckKey(str(root), path.relative_to(root).as_posix())
+        if DECLARES_APP.search(text) and path.is_relative_to(root):
+            relative = path.relative_to(root).as_posix()
+            if self.settings.target and names_file(self.settings.target, relative):
+                return CheckKey(str(root), self.settings.target)
+            return CheckKey(str(root), relative)
         if self.settings.target:
             return CheckKey(str(root), self.settings.target)
         if os.environ.get("ARKITEKT_APP") or (root / "app.py").exists():
@@ -488,6 +482,23 @@ class ArkitektLanguageServer(LanguageServer):
         if key is not None:
             asyncio.ensure_future(self.run_check(key))
 
+    def check_if_new(self, uri: str) -> None:
+        key = self.check_key(uri)
+        if key is not None and self.settings.check_on_save and key not in self.checks:
+            self.checks[key] = CheckState()  # now, so a second open of the same app does not check it twice
+            asyncio.ensure_future(self.run_check(key))
+
+    def target_changed(self, before: str | None) -> None:
+        """Another app was chosen: what the old choice found goes, and the open files check the new one."""
+        for key in [key for key in self.checks if key.target == before]:
+            state = self.checks.pop(key)
+            state.generation += 1
+            if state.process is not None and state.process.returncode is None:
+                state.process.kill()
+        for uri in list(self.workspace.text_documents):
+            self.check_if_new(uri)
+            self.refresh(uri)
+
     # -- publishing
 
     def diagnostic(
@@ -650,7 +661,10 @@ async def initialized(ls: ArkitektLanguageServer, params: types.InitializedParam
 @server.feature(types.WORKSPACE_DID_CHANGE_CONFIGURATION)
 async def did_change_configuration(ls: ArkitektLanguageServer, params: types.DidChangeConfigurationParams) -> None:
     settings = params.settings
+    before = ls.settings.target
     ls.settings.update(settings.get("arkitekt") if isinstance(settings, dict) else None)
+    if ls.settings.target != before:
+        ls.target_changed(before)
     await ls.connect_as_configured()
 
 
@@ -658,10 +672,7 @@ async def did_change_configuration(ls: ArkitektLanguageServer, params: types.Did
 async def did_open(ls: ArkitektLanguageServer, params: types.DidOpenTextDocumentParams) -> None:
     uri = params.text_document.uri
     ls.refresh(uri)
-    key = ls.check_key(uri)
-    if key is not None and ls.settings.check_on_save and key not in ls.checks:
-        ls.checks[key] = CheckState()  # now, so a second open of the same app does not check it twice
-        asyncio.ensure_future(ls.run_check(key))
+    ls.check_if_new(uri)
 
 
 @server.feature(types.TEXT_DOCUMENT_DID_CHANGE)
@@ -699,7 +710,7 @@ def code_lens(ls: ArkitektLanguageServer, params: types.CodeLensParams) -> list[
             )
         )
     if ls.settings.client_picks_dependencies and ls.connection.connected:
-        for match in _DECLARES_APP.finditer(document.source):
+        for match in DECLARES_APP.finditer(document.source):
             at = document.client_position_at_offset(match.start())
             lenses.append(
                 types.CodeLens(
@@ -745,6 +756,12 @@ async def rekuest_refresh(ls: ArkitektLanguageServer, params: Any) -> None:  # n
     ls.connection.forget()
     for state in ls.checks.values():
         await ls.ask_about(state)
+
+
+@server.feature(APPS)
+async def apps(ls: ArkitektLanguageServer, params: Any) -> dict[str, Any]:  # noqa: ANN401 - a custom request
+    """The apps of the workspace and the current choice, read rather than imported."""
+    return {"apps": await asyncio.to_thread(find_apps, ls.folders()), "target": ls.settings.target}
 
 
 @server.feature(REKUEST_OFFERS)
