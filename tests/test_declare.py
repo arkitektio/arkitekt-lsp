@@ -84,3 +84,25 @@ def test_a_port_only_the_app_can_name_is_a_comment_saying_so_never_a_guess() -> 
     assert "def move_to(self, x_um: float, tags: Optional[list[str]] = None, z_um: float = 0.0) -> float:" in written.source
     assert "# snap() → @mikro/image: needs @mikro/image" in written.source
     assert "def snap" not in written.source
+
+
+def test_a_structure_the_app_knows_is_written_as_its_class(tmp_path: Path) -> None:
+    """The class and its import come from what the check said the registry has."""
+    offer = offer_of(AGENT)
+    (tmp_path / "shapes.py").write_text("class Image:\n    id: str\n")
+    source = (
+        "from arkitekt import App\nfrom shapes import Image\n\napp = App('mine', '1.0.0')\n"
+        "@app.registry.structure_registry.structure('@mikro/image', cls=Image)\n"
+        "async def expand(id: str) -> Image:\n    return Image()\n"
+    )
+    known = {"@mikro/image": {"identifier": "@mikro/image", "kind": "STRUCTURE", "name": "Image", "module": "shapes"}}
+    snap = [action for action in offer["actions"] if action["key"] == "snap"]
+
+    written = write_dependency(source, app=offer["app"], class_name="Stage", actions=snap, known=known)
+
+    assert "def snap(self) -> Image:" in written.source
+    assert not any("Image" in line for line in written.imports), "the file has it already"
+    assert write_dependency(source.replace("from shapes import Image\n", ""), app=None, class_name="S", actions=snap, known=known).imports == (
+        "from shapes import Image",
+        "from typing import Protocol",
+    )

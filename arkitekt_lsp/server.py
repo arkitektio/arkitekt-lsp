@@ -58,6 +58,7 @@ from arkitekt_lsp.declare import (
     class_name_for,
     class_names,
     import_line,
+    known_structures,
     signature,
     state_missing,
     write_dependency,
@@ -420,6 +421,12 @@ class ArkitektLanguageServer(LanguageServer):
         for state in self.checks.values():
             await self.ask_about(state)
 
+    def structures_known_to(self, uri: str) -> dict[str, Any]:
+        """The classes the app of ``uri`` has for identifiers, as its last good check said."""
+        key = self.check_key(uri)
+        state = self.checks.get(key) if key is not None else None
+        return known_structures(state.last_good if state is not None else None)
+
     async def log_in(self, url: str | None = None) -> None:
         """Connect because the user asked, also where the settings alone would change nothing: a
         connection that failed keeps its url, and only asking again gives it another go."""
@@ -750,6 +757,7 @@ async def rekuest_offers(ls: ArkitektLanguageServer, params: Any) -> dict[str, A
     ls.offers = offers
     uri = getattr(params, "uri", None)
     taken = class_names(ls.workspace.get_text_document(uri).source) if uri else []
+    known = ls.structures_known_to(uri) if uri else {}
     return {
         "agents": [
             {
@@ -760,10 +768,10 @@ async def rekuest_offers(ls: ArkitektLanguageServer, params: Any) -> dict[str, A
                 "version": offer["version"],
                 "className": class_name_for(offer["app"], taken),
                 "actions": [
-                    {"key": a["key"], "name": a.get("name"), "signature": signature(a), "missing": action_missing(a)}
+                    {"key": a["key"], "name": a.get("name"), "signature": signature(a, known), "missing": action_missing(a, known)}
                     for a in offer["actions"]
                 ],
-                "states": [{"key": s["key"], "missing": state_missing(s)} for s in offer["states"]],
+                "states": [{"key": s["key"], "missing": state_missing(s, known)} for s in offer["states"]],
             }
             for offer in offers.values()
         ]
@@ -785,6 +793,7 @@ async def rekuest_declare(ls: ArkitektLanguageServer, params: Any) -> dict[str, 
             class_name=params.className,
             actions=[a for a in offer["actions"] if a["key"] in picked_actions],
             states=[s for s in offer["states"] if s["key"] in picked_states],
+            known=ls.structures_known_to(params.uri),
         )
         line = import_line(source)
     except CannotDeclare as error:

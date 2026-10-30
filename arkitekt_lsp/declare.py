@@ -1,9 +1,10 @@
 """A dependency written out: the ``@app.declare`` class of what an agent offers, as Python source.
 
 The server says what an agent offers as ports. A dependency on it is the class you would write by
-hand, so that is what comes out: the check then treats it like any other. A port this module cannot
-name (a structure, a model, an enum: their Python class is the app's to import) leaves the action or
-state as a comment saying what is missing, never a type guessed at.
+hand, so that is what comes out: the check then treats it like any other. A structure, a model or an
+enum is written as the class the app's own registry has for its identifier (the check's report lists
+them, services included). One it has none for leaves the action or state as a comment saying what is
+missing, never a type guessed at.
 """
 
 import ast
@@ -16,6 +17,7 @@ from typing import Any
 
 _SCALARS = {"INT": "int", "FLOAT": "float", "STRING": "str", "BOOL": "bool"}
 _IMPORTS = {"Protocol": "typing", "Optional": "typing", "datetime": "datetime", "Iterator": "collections.abc"}
+_BY_IDENTIFIER = ("STRUCTURE", "MODEL", "ENUM", "MEMORY_STRUCTURE")
 _APP_NAMES = {"App", "QtApp"}
 
 
@@ -23,35 +25,51 @@ class CannotDeclare(Exception):
     """Why this source has no place for a dependency: said to the user as it is."""
 
 
-def _type_of(port: Mapping[str, Any], needs: set[str]) -> str | None:
-    """The annotation of ``port``, or None when only the app could name its class."""
+Known = Mapping[str, Mapping[str, Any]]
+"""The class behind each identifier, as the check's report lists it."""
+
+
+def known_structures(report: Mapping[str, Any] | None) -> dict[str, Mapping[str, Any]]:
+    """What ``report`` says the app knows; a report from before it listed them knows nothing."""
+    return {str(record["identifier"]): record for record in (report or {}).get("structures") or ()}
+
+
+def _type_of(port: Mapping[str, Any], needs: dict[str, str], known: Known = {}) -> str | None:  # noqa: B006 - never written to
+    """The annotation of ``port``, or None when the app has no class for it. ``needs`` collects what
+    the annotation names: each name with its module."""
     kind = port.get("kind")
     children = port.get("children") or ()
     if kind in _SCALARS:
         name: str | None = _SCALARS[kind]
     elif kind == "DATE":
-        needs.add("datetime")
+        needs["datetime"] = _IMPORTS["datetime"]
         name = "datetime"
+    elif kind in _BY_IDENTIFIER:
+        record = known.get(str(port.get("identifier")))
+        if record is None or record.get("kind") != kind:
+            return None
+        name = str(record["name"])
+        needs[name] = str(record["module"])
     elif kind in ("LIST", "DICT") and len(children) == 1:
-        child = _type_of(children[0], needs)
+        child = _type_of(children[0], needs, known)
         if child is None:
             return None
         name = f"list[{child}]" if kind == "LIST" else f"dict[str, {child}]"
     else:
         return None
     if port.get("nullable"):
-        needs.add("Optional")
+        needs["Optional"] = _IMPORTS["Optional"]
         return f"Optional[{name}]"
     return name
 
 
-def _missing(ports: Sequence[Mapping[str, Any]]) -> list[str]:
-    """What the ports need that cannot be named here: identifiers where they have one."""
+def _missing(ports: Sequence[Mapping[str, Any]], known: Known = {}) -> list[str]:  # noqa: B006 - never written to
+    """What the ports need that the app has no class for: identifiers where they have one."""
     found: list[str] = []
     for port in ports:
-        if _type_of(port, set()) is None:
+        if _type_of(port, {}, known) is None:
             children = port.get("children") or ()
-            inner = _missing(children) if port.get("kind") in ("LIST", "DICT") and children else []
+            inner = _missing(children, known) if port.get("kind") in ("LIST", "DICT") and children else []
             found.extend(inner or [str(port.get("identifier") or port.get("kind"))])
     return found
 
@@ -63,7 +81,7 @@ def _default(port: Mapping[str, Any]) -> str | None:
     return repr(value) if isinstance(value, (bool, int, float, str)) else None
 
 
-def _parameters(args: Sequence[Mapping[str, Any]], needs: set[str]) -> list[str]:
+def _parameters(args: Sequence[Mapping[str, Any]], needs: dict[str, str], known: Known) -> list[str]:
     parameters = ["self"]
     defaulted = keyword_only = False
     for port in args:
@@ -72,32 +90,32 @@ def _parameters(args: Sequence[Mapping[str, Any]], needs: set[str]) -> list[str]
             parameters.append("*")  # a required one after a defaulted one: as its own action must have it
             keyword_only = True
         defaulted = defaulted or default is not None
-        annotation = f"{port['key']}: {_type_of(port, needs)}"
+        annotation = f"{port['key']}: {_type_of(port, needs, known)}"
         parameters.append(annotation if default is None else f"{annotation} = {default}")
     return parameters
 
 
-def _returns(action: Mapping[str, Any], needs: set[str]) -> str:
-    types = [_type_of(port, needs) for port in action.get("returns") or ()]
+def _returns(action: Mapping[str, Any], needs: dict[str, str], known: Known) -> str:
+    types = [_type_of(port, needs, known) for port in action.get("returns") or ()]
     returned = "None" if not types else str(types[0]) if len(types) == 1 else f"tuple[{', '.join(map(str, types))}]"
     if action.get("kind") == "GENERATOR":
-        needs.add("Iterator")
+        needs["Iterator"] = _IMPORTS["Iterator"]
         return f"Iterator[{returned}]"
     return returned
 
 
-def action_missing(action: Mapping[str, Any]) -> list[str]:
-    return _missing([*(action.get("args") or ()), *(action.get("returns") or ())])
+def action_missing(action: Mapping[str, Any], known: Known = {}) -> list[str]:  # noqa: B006 - never written to
+    return _missing([*(action.get("args") or ()), *(action.get("returns") or ())], known)
 
 
-def state_missing(state: Mapping[str, Any]) -> list[str]:
-    return _missing(state.get("ports") or ())
+def state_missing(state: Mapping[str, Any], known: Known = {}) -> list[str]:  # noqa: B006 - never written to
+    return _missing(state.get("ports") or (), known)
 
 
-def signature(action: Mapping[str, Any]) -> str:
+def signature(action: Mapping[str, Any], known: Known = {}) -> str:  # noqa: B006 - never written to
     """How an action reads in a picker: ``move_to(x_um: float, y_um: float) → float``."""
-    args = ", ".join(f"{p['key']}: {_type_of(p, set()) or p.get('identifier') or p.get('kind')}" for p in action.get("args") or ())
-    returns = [_type_of(p, set()) or p.get("identifier") or p.get("kind") for p in action.get("returns") or ()]
+    args = ", ".join(f"{p['key']}: {_type_of(p, {}, known) or p.get('identifier') or p.get('kind')}" for p in action.get("args") or ())
+    returns = [_type_of(p, {}, known) or p.get("identifier") or p.get("kind") for p in action.get("returns") or ()]
     return f"{action['key']}({args})" + (f" → {', '.join(map(str, returns))}" if returns else "")
 
 
@@ -115,12 +133,13 @@ def class_name_for(app: str | None, taken: Sequence[str] = ()) -> str:
 
 
 def _docstring(text: str | None, fallback: str) -> str:
-    line = (text or "").strip().splitlines()[0] if (text or "").strip() else fallback
+    # The server's word for an action that has no description is no description.
+    line = (text or "").strip().splitlines()[0] if (text or "").strip() and text != "No Description" else fallback
     return line.replace("\\", "\\\\").replace('"""', "'''").rstrip('"')
 
 
-def _state_class(name: str, state: Mapping[str, Any], needs: set[str]) -> str:
-    fields = [f"    {port['key']}: {_type_of(port, needs)}" for port in state.get("ports") or ()]
+def _state_class(name: str, state: Mapping[str, Any], needs: dict[str, str], known: Known) -> str:
+    fields = [f"    {port['key']}: {_type_of(port, needs, known)}" for port in state.get("ports") or ()]
     return "\n".join([f"class {name}:", f'    """The state as {state["key"]} publishes it."""', "", *fields]) + "\n"
 
 
@@ -181,6 +200,7 @@ def write_dependency(
     class_name: str,
     actions: Sequence[Mapping[str, Any]] = (),
     states: Sequence[Mapping[str, Any]] = (),
+    known: Known = {},  # noqa: B006 - never written to
 ) -> Written:
     """The ``@<app>.declare`` class of ``actions`` and ``states`` of ``app``, for the file ``source``."""
     if not class_name.isidentifier() or keyword.iskeyword(class_name):
@@ -192,30 +212,30 @@ def write_dependency(
     if class_name in taken:
         raise CannotDeclare(f"This file already has a class {class_name}.")
 
-    needs = {"Protocol"}
+    needs: dict[str, str] = {"Protocol": _IMPORTS["Protocol"]}
     above: list[str] = []
     members: list[str] = []
     for state in states:
         key = str(state["key"])
-        lacking = state_missing(state)
+        lacking = state_missing(state, known)
         if lacking:
-            members.append(f"    # state {key}: needs {', '.join(lacking)}, which only your app can import")
+            members.append(f"    # state {key}: needs {', '.join(lacking)}, which no service of this app declares")
             continue
         name = _class_of_state(key)
         if name not in taken:
-            above.append(_state_class(name, state, needs))
+            above.append(_state_class(name, state, needs, known))
             taken.add(name)
         members.append(f"    {key}: {name}")
     for action in actions:
         key = str(action["key"])
-        lacking = action_missing(action)
+        lacking = action_missing(action, known)
         if not key.isidentifier() or keyword.iskeyword(key):
             members.append(f"    # {key}: not a name a method can have")
         elif lacking:
-            members.append(f"    # {signature(action)}: needs {', '.join(lacking)}, which only your app can import")
+            members.append(f"    # {signature(action, known)}: needs {', '.join(lacking)}, which no service of this app declares")
         else:
             members.append(
-                f"    def {key}({', '.join(_parameters(action.get('args') or (), needs))}) -> {_returns(action, needs)}:\n"
+                f"    def {key}({', '.join(_parameters(action.get('args') or (), needs, known))}) -> {_returns(action, needs, known)}:\n"
                 f'        """{_docstring(action.get("description"), key)}"""\n'
                 "        ..."
             )
@@ -230,11 +250,15 @@ def write_dependency(
         if isinstance(node, ast.ClassDef) and any(_is_declare(decorator, variable) for decorator in node.decorator_list):
             after = max(after, node.end_lineno or after)
     have = _imported(tree)
+    defined_here = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
     modules: dict[str, list[str]] = {}
-    for need in sorted(needs - have):
-        modules.setdefault(_IMPORTS[need], []).append(need)
+    for need, module in sorted(needs.items()):
+        if need in defined_here:  # this very file's class: it only has to come first
+            after = max(after, defined_here[need].end_lineno or after)
+        elif need not in have:
+            modules.setdefault(module, []).append(need)
     imports = tuple(f"from {module} import {', '.join(names)}" for module, names in sorted(modules.items()))
-    head = "\n\n\n" + block + "\n"
+    head = "\n\n" + block + "\n"
     offset = len(imports) + head[: head.index(f"class {class_name}(")].count("\n")
     return Written(source=head, imports=imports, line=after, class_line=after + offset)
 
@@ -266,6 +290,7 @@ __all__ = [
     "class_name_for",
     "class_names",
     "import_line",
+    "known_structures",
     "signature",
     "state_missing",
     "write_dependency",

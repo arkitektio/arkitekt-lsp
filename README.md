@@ -41,8 +41,10 @@ A login nobody approves or a server that is gone leaves the server local, and sa
 
 An editor can also write a dependency for you: the request `arkitekt/rekuest/offers` (`{uri?}`) lists
 the agents with what each offers, and `arkitekt/rekuest/declare` (`{uri, agent, className, actions,
-states}`) writes the `@app.declare` class of what was picked, as an edit the editor applies. A port
-whose class only your app can import (a structure, say) leaves that action as a comment naming it.
+states}`) writes the `@app.declare` class of what was picked, as an edit the editor applies. A
+structure, a model or an enum is written as the class your app's registry has for it, services
+included (`arkitekt>=11.4`'s report lists them); one it has none for leaves that action as a comment
+naming it. The next save re-reads the registry, so adding the service is enough.
 
 An editor can start this itself: the notification `arkitekt/rekuest/login` (`{url?}`) connects now,
 also after a failure, and the request `arkitekt/rekuest/logout` leaves, revokes the login and forgets
