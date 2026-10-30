@@ -39,6 +39,11 @@ would satisfy it, nothing registered, so a protocol you just wrote is asked abou
 
 A login nobody approves or a server that is gone leaves the server local, and says so.
 
+An editor can also write a dependency for you: the request `arkitekt/rekuest/offers` (`{uri?}`) lists
+the agents with what each offers, and `arkitekt/rekuest/declare` (`{uri, agent, className, actions,
+states}`) writes the `@app.declare` class of what was picked, as an edit the editor applies. A port
+whose class only your app can import (a structure, say) leaves that action as a comment naming it.
+
 An editor can start this itself: the notification `arkitekt/rekuest/login` (`{url?}`) connects now,
 also after a failure, and the request `arkitekt/rekuest/logout` leaves, revokes the login and forgets
 it (`{forgotten}`). One that sets `clientShowsLogin` in its initialization options is told

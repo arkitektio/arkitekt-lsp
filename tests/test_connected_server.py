@@ -10,7 +10,16 @@ from lsprotocol import types
 from pygls.workspace import Workspace
 
 from arkitekt_lsp.connected import DEFAULT_URL, AgentInfo, Availability
-from arkitekt_lsp.server import ArkitektLanguageServer, CheckKey, CheckState, Settings, code_lens, hover
+from arkitekt_lsp.server import (
+    ArkitektLanguageServer,
+    CheckKey,
+    CheckState,
+    Settings,
+    code_lens,
+    hover,
+    rekuest_declare,
+    rekuest_offers,
+)
 
 SOURCE = (
     "class Lab(Protocol):\n"
@@ -249,3 +258,49 @@ def test_a_client_that_shows_the_login_is_told_the_challenge(served: Any, monkey
             {"url": DEFAULT_URL, "code": "AB-CD", "link": "https://hub/ok?code=AB-CD", "expiresIn": 600},
         )
     ]
+
+
+def test_a_pick_of_what_an_agent_offers_becomes_an_edit_of_the_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    file = tmp_path / "app.py"
+    source = 'from arkitekt import App\n\napp = App("mine")\n'
+    file.write_text(source)
+    ls = ArkitektLanguageServer()
+    workspace = Workspace(tmp_path.as_uri(), types.TextDocumentSyncKind.Incremental)
+    workspace.put_text_document(types.TextDocumentItem(uri=file.as_uri(), language_id="python", version=1, text=source))
+    monkeypatch.setattr(ls.protocol, "_workspace", workspace, raising=False)
+    applied: list[Any] = []
+
+    async def apply(params: Any) -> Any:
+        applied.append(params)
+        return SimpleNamespace(applied=True, failure_reason=None)
+
+    monkeypatch.setattr(ls, "workspace_apply_edit_async", apply)
+
+    class Offering:
+        async def offers(self) -> dict[str, dict[str, Any]]:
+            return {
+                "7": {
+                    "id": "7",
+                    "name": "stage",
+                    "connected": True,
+                    "app": "microscope-stage",
+                    "version": "1",
+                    "actions": [{"key": "home", "args": [], "returns": []}],
+                    "states": [],
+                }
+            }
+
+    ls.connection = Offering()  # type: ignore[assignment]
+
+    listed = asyncio.run(rekuest_offers(ls, SimpleNamespace(uri=file.as_uri())))
+    (agent,) = listed["agents"]
+    assert (agent["className"], agent["actions"][0]["signature"]) == ("MicroscopeStage", "home()")
+
+    pick = SimpleNamespace(uri=file.as_uri(), agent="7", className="MicroscopeStage", actions=["home"], states=[])
+    answer = asyncio.run(rekuest_declare(ls, pick))
+
+    (edit,) = applied
+    texts = "".join(change.new_text for change in edit.edit.changes[file.as_uri()])
+    assert "error" not in answer
+    assert '@app.declare(app="microscope-stage")\nclass MicroscopeStage(Protocol):' in texts
+    assert "from typing import Protocol" in texts

@@ -187,6 +187,27 @@ def dependency_key_at(text: str, index: int) -> str | None:
     return None
 
 
+def offer_of(agent: Mapping[str, Any]) -> dict[str, Any]:
+    """An agent of the server's answer, flat: its actions, and its states with their ports."""
+    actions = {str(i["action"]["key"]): dict(i["action"]) for i in agent.get("implementations") or ()}
+    states = {
+        str(state.get("key") or state["interface"]): {
+            "key": str(state.get("key") or state["interface"]),
+            "ports": list((state.get("definition") or {}).get("ports") or ()),
+        }
+        for state in agent.get("states") or ()
+    }
+    return {
+        "id": str(agent["id"]),
+        "name": str(agent["name"]),
+        "connected": bool(agent["connected"]),
+        "app": (agent.get("app") or {}).get("identifier"),
+        "version": (agent.get("release") or {}).get("version"),
+        "actions": list(actions.values()),
+        "states": list(states.values()),
+    }
+
+
 # -- the connection
 
 
@@ -267,6 +288,19 @@ class Connection:
         """Drop what it knows, so the next question reaches the server."""
         self.answers.clear()
 
+    async def offers(self) -> dict[str, dict[str, Any]] | None:
+        """Per agent id, what it offers, as a picker and a dependency read it; None without an answer."""
+        client = self.client
+        if client is None:
+            return None
+        try:
+            agents = await asyncio.wait_for(client.aoffers(AGENT_LIMIT), QUERY_TIMEOUT)
+        except Exception as error:  # noqa: BLE001 - no answer is an answer: nothing to offer
+            logger.warning("Asking %s what agents offer failed: %s", self.url, error)
+            self.status("offline", message=f"{type(error).__name__}: {error}" if str(error) else type(error).__name__)
+            return None
+        return {str(agent["id"]): offer_of(agent) for agent in agents}
+
     async def availability(self, dependency: Mapping[str, Any]) -> Availability | None:
         """Who would satisfy ``dependency`` now; None while there is no answer (offline, too slow)."""
         client = self.client
@@ -325,6 +359,7 @@ __all__ = [
     "forget_login",
     "hover_markdown",
     "lens_title",
+    "offer_of",
     "problem",
     "slot_filters",
 ]

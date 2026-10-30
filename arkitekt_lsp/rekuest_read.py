@@ -29,11 +29,46 @@ query LspAgents($filters: AgentFilter, $pagination: OffsetPaginationInput) {
 """
 
 
+_PORT = """
+    key
+    kind
+    nullable
+    identifier
+"""
+
+_OFFERS = """
+query LspOffers($pagination: OffsetPaginationInput) {
+  agents(pagination: $pagination) {
+    id
+    name
+    connected
+    app { identifier }
+    release { version }
+    implementations {
+      action {
+        key
+        name
+        kind
+        description
+        args { default children { PORT children { PORT } } PORT }
+        returns { children { PORT children { PORT } } PORT }
+      }
+    }
+    states {
+      interface
+      key
+      definition { ports { children { PORT children { PORT } } PORT } }
+    }
+  }
+}
+""".replace("PORT", _PORT)
+
+
 class RekuestRead(Composition):
     """All the language server asks of rekuest.
 
     Rekuest's own client also registers agents and writes, and says so: an app using it asks for
-    those scopes at login. This one's single query needs ``rekuest_read``, and that is all it says.
+    those scopes at login. This one's queries need ``rekuest_read``, and that is all it says.
     """
 
     __scopes__: ClassVar[tuple[str, ...]] = ("rekuest_read",)
@@ -42,6 +77,11 @@ class RekuestRead(Composition):
 
     async def aagents(self, filters: Mapping[str, Any], limit: int) -> list[dict[str, Any]]:
         result = await self.rath.aquery(_AGENTS, {"filters": dict(filters), "pagination": {"limit": limit}})
+        return list(result.data["agents"])
+
+    async def aoffers(self, limit: int) -> list[dict[str, Any]]:
+        """The agents, each with the actions and states it offers."""
+        result = await self.rath.aquery(_OFFERS, {"pagination": {"limit": limit}})
         return list(result.data["agents"])
 
 

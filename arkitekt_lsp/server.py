@@ -52,6 +52,16 @@ from arkitekt_lsp.connected import (
     lens_title,
     problem,
 )
+from arkitekt_lsp.declare import (
+    CannotDeclare,
+    action_missing,
+    class_name_for,
+    class_names,
+    import_line,
+    signature,
+    state_missing,
+    write_dependency,
+)
 from arkitekt_lsp.live import live_findings
 from arkitekt_lsp.placement import Span, place
 from arkitekt_lsp.regions import BlokLiteral, blok_literals
@@ -72,6 +82,10 @@ REKUEST_LOGIN = "arkitekt/rekuest/login"
 """Taken from the client: log in now, at ``url`` if it names one."""
 REKUEST_LOGOUT = "arkitekt/rekuest/logout"
 """Asked by the client: leave, revoke the login and forget it."""
+REKUEST_OFFERS = "arkitekt/rekuest/offers"
+"""Asked by the client: the agents, and what each offers."""
+REKUEST_DECLARE = "arkitekt/rekuest/declare"
+"""Asked by the client: write a dependency on what it picked of one agent into a file."""
 REKUEST_CHALLENGE = "arkitekt/rekuest/challenge"
 """Told to a client that shows the login itself: what to approve, and where."""
 STATUS = "arkitekt/status"
@@ -105,6 +119,8 @@ class Settings:
     server_url: str = DEFAULT_URL
     server_from_flags: bool = False
     """``--connect`` or ``--server`` was given: what the editor configures does not move it."""
+    client_picks_dependencies: bool = False
+    """The client said so at initialization: a connected file offers it the way in, above its app."""
     client_shows_login: bool = False
     """The client said so at initialization: it gets the challenge, not a plain message."""
 
@@ -120,6 +136,8 @@ class Settings:
             self.timeout = float(options["timeout"])
         if "target" in options:
             self.target = options["target"] or None
+        if options.get("clientPicksDependencies") is True:
+            self.client_picks_dependencies = True
         if options.get("clientShowsLogin") is True:
             self.client_shows_login = True
         server = options.get("server")
@@ -183,6 +201,8 @@ class ArkitektLanguageServer(LanguageServer):
         self.one_at_a_time = asyncio.Semaphore(1)
         """Checks import whole apps (torch, CUDA): opening many app files queues them, newest kept."""
         self.connection: Connection | None = None
+        self.offers: dict[str, dict[str, Any]] = {}
+        """What the agents offered, when last asked: what a pick of them is read against."""
         """The read-only login, when connecting was asked for."""
 
     # -- which app
@@ -671,6 +691,15 @@ def code_lens(ls: ArkitektLanguageServer, params: types.CodeLensParams) -> list[
                 command=types.Command(title=lens_title(answer), command="arkitekt.rekuest.refresh"),
             )
         )
+    if ls.settings.client_picks_dependencies and ls.connection.connected:
+        for match in _DECLARES_APP.finditer(document.source):
+            at = document.client_position_at_offset(match.start())
+            lenses.append(
+                types.CodeLens(
+                    range=types.Range(start=at, end=at),
+                    command=types.Command(title="$(add) Add a dependency", command="arkitekt.addDependency"),
+                )
+            )
     return lenses
 
 
@@ -709,6 +738,71 @@ async def rekuest_refresh(ls: ArkitektLanguageServer, params: Any) -> None:  # n
     ls.connection.forget()
     for state in ls.checks.values():
         await ls.ask_about(state)
+
+
+@server.feature(REKUEST_OFFERS)
+async def rekuest_offers(ls: ArkitektLanguageServer, params: Any) -> dict[str, Any]:  # noqa: ANN401 - a custom request
+    """The agents and what each offers, each already worded for a picker."""
+    connection = ls.connection
+    offers = await connection.offers() if connection is not None else None
+    if offers is None:
+        return {"error": "Not logged in, or the server did not answer."}
+    ls.offers = offers
+    uri = getattr(params, "uri", None)
+    taken = class_names(ls.workspace.get_text_document(uri).source) if uri else []
+    return {
+        "agents": [
+            {
+                "id": offer["id"],
+                "name": offer["name"],
+                "connected": offer["connected"],
+                "app": offer["app"],
+                "version": offer["version"],
+                "className": class_name_for(offer["app"], taken),
+                "actions": [
+                    {"key": a["key"], "name": a.get("name"), "signature": signature(a), "missing": action_missing(a)}
+                    for a in offer["actions"]
+                ],
+                "states": [{"key": s["key"], "missing": state_missing(s)} for s in offer["states"]],
+            }
+            for offer in offers.values()
+        ]
+    }
+
+
+@server.feature(REKUEST_DECLARE)
+async def rekuest_declare(ls: ArkitektLanguageServer, params: Any) -> dict[str, Any]:  # noqa: ANN401 - a custom request
+    """Write the dependency into the file, as an edit the editor applies: undoable like any other."""
+    offer = ls.offers.get(str(params.agent))
+    if offer is None:
+        return {"error": "That agent is gone: pick it again."}
+    picked_actions, picked_states = set(params.actions or ()), set(params.states or ())
+    source = ls.workspace.get_text_document(params.uri).source
+    try:
+        written = write_dependency(
+            source,
+            app=offer["app"],
+            class_name=params.className,
+            actions=[a for a in offer["actions"] if a["key"] in picked_actions],
+            states=[s for s in offer["states"] if s["key"] in picked_states],
+        )
+        line = import_line(source)
+    except CannotDeclare as error:
+        return {"error": str(error)}
+    at_end = written.line >= len(source.splitlines()) and not source.endswith("\n")
+    place = types.Position(line=written.line, character=0)
+    edits = [
+        types.TextEdit(range=types.Range(start=place, end=place), new_text=("\n" if at_end else "") + written.source)
+    ]
+    if written.imports:
+        at = types.Position(line=line, character=0)
+        edits.insert(0, types.TextEdit(range=types.Range(start=at, end=at), new_text="\n".join(written.imports) + "\n"))
+    answer = await ls.workspace_apply_edit_async(
+        types.ApplyWorkspaceEditParams(edit=types.WorkspaceEdit(changes={params.uri: edits}), label="Add a dependency")
+    )
+    if not answer.applied:
+        return {"error": answer.failure_reason or "The editor did not apply the edit."}
+    return {"line": written.class_line}
 
 
 @server.feature(REKUEST_LOGIN)
