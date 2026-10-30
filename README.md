@@ -59,7 +59,13 @@ The request `arkitekt/apps` (`{}` → `{apps: [{target, file, line, project}], t
 apps of the workspace, by reading its files without importing any, for a client to offer.
 
 Settings (initialization options, or `workspace/didChangeConfiguration` under `arkitekt`):
-`check.onSave` (default true), `check.timeout` (seconds, default 120), `target`.
+`check.onSave` (default true), `check.timeout` (seconds, default 120), `check.warnOnFStrings`
+(default true), `target`.
+
+A blok written as an f-string with a field gets a warning at its opening quote (`blok.generated`):
+Python fills it in once, when the app starts, so it can't follow the app as it runs the way
+`<foreach>` and `<if>` can. `arkitekt check` still checks what it evaluates to. The warning is the
+editor's, because a check only ever sees the finished string.
 
 Besides the standard protocol it answers `bsx/regions` (`{textDocument: {uri}}` →
 `{regions: [{start, end, value, root, context, kind, exact}]}`), the blok literals of a document,

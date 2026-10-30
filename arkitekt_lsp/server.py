@@ -66,7 +66,7 @@ from arkitekt_lsp.declare import (
 )
 from arkitekt_lsp.live import live_findings
 from arkitekt_lsp.placement import Span, place
-from arkitekt_lsp.regions import BlokLiteral, blok_literals
+from arkitekt_lsp.regions import BlokLiteral, blok_literals, generated_bloks
 from arkitekt_lsp.scopes import Anchors, anchor_bloks, blok_of
 
 logger = logging.getLogger(__name__)
@@ -97,6 +97,11 @@ APPS = "arkitekt/apps"
 REGIONS = "bsx/regions"
 CHECK = "arkitekt/check"
 
+_GENERATED = "This blok is an f-string: Python fills it in once, when the app starts, and it is static after that."
+_GENERATED_HINT = (
+    "What should follow the app as it runs belongs in the blok: <foreach>, <if> and expressions. "
+    "Turn this warning off with the setting check.warnOnFStrings."
+)
 _SEVERITY = {
     "error": types.DiagnosticSeverity.Error,
     "warning": types.DiagnosticSeverity.Warning,
@@ -116,6 +121,8 @@ class Settings:
 
     check_on_save: bool = True
     timeout: float = 120.0
+    warn_on_fstrings: bool = True
+    """Warn at a blok written as an f-string: generated once, when the app starts."""
     target: str | None = None
     connect: bool = False
     """Ask rekuest about dependencies. Off, the server talks to nothing."""
@@ -132,11 +139,18 @@ class Settings:
             return
         check = options.get("check")
         if isinstance(check, dict):
-            options = {**options, "checkOnSave": check.get("onSave"), "timeout": check.get("timeout")}
+            options = {
+                **options,
+                "checkOnSave": check.get("onSave"),
+                "timeout": check.get("timeout"),
+                "warnOnFStrings": check.get("warnOnFStrings"),
+            }
         if isinstance(options.get("checkOnSave"), bool):
             self.check_on_save = options["checkOnSave"]
         if isinstance(options.get("timeout"), (int, float)) and options["timeout"] > 0:
             self.timeout = float(options["timeout"])
+        if isinstance(options.get("warnOnFStrings"), bool):
+            self.warn_on_fstrings = options["warnOnFStrings"]
         if "target" in options:
             self.target = options["target"] or None
         if options.get("clientPicksDependencies") is True:
@@ -561,6 +575,13 @@ class ArkitektLanguageServer(LanguageServer):
                         )
                     )
             if self.is_open(uri):
+                if self.settings.warn_on_fstrings:
+                    for span in generated_bloks(text):
+                        diagnostics.append(
+                            self.diagnostic(
+                                document, span, "warning", "blok.generated", _GENERATED, _GENERATED_HINT, LIVE_SOURCE
+                            )
+                        )
                 for index, literal in enumerate(literals):
                     if literal.value in checked:
                         continue  # as the check saw it: the check has said it
@@ -662,9 +683,12 @@ async def initialized(ls: ArkitektLanguageServer, params: types.InitializedParam
 async def did_change_configuration(ls: ArkitektLanguageServer, params: types.DidChangeConfigurationParams) -> None:
     settings = params.settings
     before = ls.settings.target
+    warned = ls.settings.warn_on_fstrings
     ls.settings.update(settings.get("arkitekt") if isinstance(settings, dict) else None)
     if ls.settings.target != before:
         ls.target_changed(before)
+    if ls.settings.warn_on_fstrings != warned:
+        ls.refresh_all()
     await ls.connect_as_configured()
 
 

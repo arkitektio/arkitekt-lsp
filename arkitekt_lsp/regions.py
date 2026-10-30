@@ -7,13 +7,16 @@ quote inside a comment or another string is never mistaken for one, and a source
 tokenize to the end (it is being typed) still yields the literals before the break. A string that
 is a statement of its own (a docstring) is never a blok: it declares nothing, and editors colour it
 as a docstring.
+
+An f-string is not one of them: what the app declares is what it evaluates to, which the source
+does not say. :func:`generated_bloks` finds the ones that open with a root, to warn about.
 """
 
 import bisect
 import io
 import re
 import tokenize
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cache
 
 from arkitekt_spec.blok.vocabulary import load_vocabulary
@@ -150,6 +153,19 @@ def _tokens(source: str) -> list[tokenize.TokenInfo]:
 
 _STATEMENT_START = frozenset({tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT})
 _INSIGNIFICANT = frozenset({tokenize.NL, tokenize.COMMENT, tokenize.ENCODING})
+_FSTRING_START = getattr(tokenize, "FSTRING_START", None)
+"""Python 3.12 splits an f-string into tokens; before that it is one ``STRING``."""
+_FSTRING_MIDDLE = getattr(tokenize, "FSTRING_MIDDLE", None)
+_FSTRING_END = getattr(tokenize, "FSTRING_END", None)
+
+
+def _root_of(value: str) -> str | None:
+    """The blok root ``value`` opens with, past whitespace and comments."""
+    lead = _LEADING.match(value)
+    opening = re.match(r"<([A-Za-z_][\w]*)\b", value[lead.end() if lead else 0 :])
+    if opening is None or opening.group(1) not in blok_roots():
+        return None
+    return opening.group(1)
 
 
 def blok_literals(source: str) -> list[BlokLiteral]:
@@ -182,11 +198,9 @@ def blok_literals(source: str) -> list[BlokLiteral]:
             if decoded is None:
                 continue
             value, offsets = decoded
-        lead = _LEADING.match(value)
-        opening = re.match(r"<([A-Za-z_][\w]*)\b", value[lead.end() if lead else 0 :])
-        if opening is None or opening.group(1) not in blok_roots():
+        root = _root_of(value)
+        if root is None:
             continue
-        root = opening.group(1)
         context = blok_roots()[root]
         if context == "ACTION_LOGO":
             kind = "action_logo"
@@ -209,4 +223,47 @@ def blok_literals(source: str) -> list[BlokLiteral]:
     return found
 
 
-__all__ = ["BlokLiteral", "blok_literals", "blok_roots"]
+@dataclass
+class _OpenFString:
+    span: tuple[int, int]
+    statement: bool
+    text: list[str] = field(default_factory=list[str])
+    """What it says before its first field."""
+    has_field: bool = False
+
+
+def generated_bloks(source: str) -> list[tuple[int, int]]:
+    """The opening (``f\"\"\"``) of each f-string with a field whose text opens with a blok root."""
+    starts = _line_starts(source)
+    found: list[tuple[int, int]] = []
+    open_strings: list[_OpenFString] = []
+    previous: int | None = None
+    for token in _tokens(source):
+        statement = previous is None or previous in _STATEMENT_START
+        if token.type not in _INSIGNIFICANT:
+            previous = token.type
+        at = starts[token.start[0] - 1] + token.start[1]
+        if token.type == tokenize.STRING:
+            prefix = _PREFIX.match(token.string)
+            letters = prefix.group().lower() if prefix else ""
+            if "f" not in letters or statement:
+                continue
+            rest = token.string[len(letters) :]
+            quote = rest[:3] if rest[:3] in ('"""', "'''") else rest[:1]
+            text = rest[len(quote) : len(rest) - len(quote)]
+            if "{" in text.replace("{{", "") and _root_of(text.partition("{")[0]) is not None:
+                found.append((at, at + len(letters) + len(quote)))
+        elif token.type == _FSTRING_START:
+            open_strings.append(_OpenFString((at, at + len(token.string)), statement))
+        elif token.type == _FSTRING_MIDDLE and open_strings and not open_strings[-1].has_field:
+            open_strings[-1].text.append(token.string)
+        elif token.type == tokenize.OP and token.string == "{" and open_strings:
+            open_strings[-1].has_field = True
+        elif token.type == _FSTRING_END and open_strings:
+            closed = open_strings.pop()
+            if closed.has_field and not closed.statement and _root_of("".join(closed.text)) is not None:
+                found.append(closed.span)
+    return sorted(found)
+
+
+__all__ = ["BlokLiteral", "blok_literals", "blok_roots", "generated_bloks"]

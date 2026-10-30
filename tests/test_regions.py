@@ -1,6 +1,6 @@
 """Finding the bloks of a Python source: string literals whose text opens with a blok root."""
 
-from arkitekt_lsp.regions import blok_literals
+from arkitekt_lsp.regions import blok_literals, generated_bloks
 
 APP = '''from arkitekt import App
 app = App("checked", "1.0")
@@ -70,3 +70,15 @@ def test_a_docstring_is_never_a_blok() -> None:
 
 def test_bytes_and_f_strings_are_never_bloks() -> None:
     assert blok_literals('a = b"<Html />"\nb = f"<Html>{x}</Html>"\n') == []
+
+
+def test_only_an_f_string_blok_with_a_field_counts_as_generated() -> None:
+    source = (
+        'app.blok("panel", f"""\n  <Html>{{self.a}}<Row>{"".join(parts)}</Row></Html>\n""")\n'
+        'app.blok("constant", f"<Html>{{self.a}}</Html>")\n'
+        'app.blok("plain", "<Html />")\n'
+        'FRAGMENT = f"<Row>{parts}</Row>"\n'
+        'f"<Html>{parts}</Html>"\n'
+    )
+
+    assert [source[start:end] for start, end in generated_bloks(source)] == ['f"""']

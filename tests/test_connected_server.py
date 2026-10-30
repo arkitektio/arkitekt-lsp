@@ -304,3 +304,19 @@ def test_a_pick_of_what_an_agent_offers_becomes_an_edit_of_the_file(tmp_path: Pa
     assert "error" not in answer
     assert '@app.declare(app="microscope-stage")\nclass MicroscopeStage(Protocol):' in texts
     assert "from typing import Protocol" in texts
+
+
+def test_the_f_string_warning_follows_its_setting(served: Any, tmp_path: Path) -> None:
+    ls, _, published = served
+    file = tmp_path / "panel.py"
+    text = 'app.blok("panel", f"<Html>{parts}</Html>")\n'
+    file.write_text(text)
+    uri = file.as_uri()
+    ls.workspace.put_text_document(types.TextDocumentItem(uri=uri, language_id="python", version=1, text=text))
+
+    ls.refresh(uri)
+    assert [diagnostic.code for diagnostic in published[-1].diagnostics] == ["blok.generated"]
+
+    ls.settings.update({"check": {"warnOnFStrings": False}})
+    ls.refresh(uri)
+    assert published[-1].diagnostics == []
