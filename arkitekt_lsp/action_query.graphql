@@ -1,0 +1,630 @@
+# What a form needs of an action: its ports and widgets, the fragments orkestrator asks for them
+# with (`graphql/rekuest-next/fragments/ports.graphql`), so `@arkitektio/bsx/ports` reads the answer.
+query LspAction($hash: ActionHash!) {
+  action(hash: $hash) {
+    id
+    name
+    description
+    hash
+    ...Ports
+    implementations {
+      id
+      interface
+      agent {
+        id
+        name
+        connected
+      }
+      dependencies {
+        id
+        key
+        description
+        appFilter
+        versionFilter
+        autoResolvable
+        optional
+        minViableInstances
+        maxViableInstances
+        singular
+      }
+    }
+  }
+}
+
+fragment Ports on Action {
+  args {
+    ...ArgPort
+  }
+  returns {
+    ...ReturnPort
+  }
+  portGroups {
+    ...PortGroup
+  }
+}
+
+fragment PortGroup on PortGroup {
+  key
+  title
+  description
+  effects {
+    ...PortEffect
+  }
+  ports
+}
+
+fragment PortEffect on Effect {
+  ...CustomEffect
+  ...MessageEffect
+  ...HideEffect
+}
+
+fragment HideEffect on HideEffect {
+  ...BaseEffect
+  __typename
+  fade
+}
+
+fragment BaseEffect on Effect {
+  __typename
+  kind
+  dependencies
+  source
+  call {
+    ...PortCall
+  }
+}
+
+fragment PortCall on UtilCall {
+  operation
+  arguments {
+    ...PortCallArgument
+  }
+}
+
+fragment PortCallArgument on ActionArgument {
+  ...PortCallLeafArgument
+  utilCall {
+    ...PortCallInner
+  }
+  valueList {
+    ...PortCallInnerArgument
+  }
+  valueDict {
+    ...PortCallInnerArgument
+  }
+}
+
+fragment PortCallInnerArgument on ActionArgument {
+  ...PortCallLeafArgument
+  utilCall {
+    ...PortCallLeaf
+  }
+  valueList {
+    ...PortCallLeafArgument
+  }
+  valueDict {
+    ...PortCallLeafArgument
+  }
+}
+
+fragment PortCallLeafArgument on ActionArgument {
+  key
+  valueLiteral
+  valuePath
+}
+
+fragment PortCallLeaf on UtilCall {
+  operation
+  arguments {
+    ...PortCallLeafArgument
+  }
+}
+
+fragment PortCallInner on UtilCall {
+  operation
+  arguments {
+    ...PortCallInnerArgument
+  }
+}
+
+fragment MessageEffect on MessageEffect {
+  ...BaseEffect
+  __typename
+  kind
+  message
+}
+
+fragment CustomEffect on CustomEffect {
+  ...BaseEffect
+  __typename
+  kind
+}
+
+fragment ReturnPort on ReturnPort {
+  __typename
+  key
+  label
+  nullable
+  description
+  effects {
+    ...PortEffect
+  }
+  widget {
+    ...ReturnWidget
+  }
+  kind
+  identifier
+  referenceUnit
+  proposedUnits
+  dimension
+  children {
+    ...ReturnChildPort
+  }
+  choices {
+    value
+    label
+    description
+  }
+  nullable
+  provides {
+    key
+    operator
+    value
+  }
+}
+
+fragment ReturnChildPort on ReturnPort {
+  __typename
+  provides {
+    key
+    operator
+    value
+  }
+  kind
+  key
+  label
+  identifier
+  referenceUnit
+  proposedUnits
+  dimension
+  children {
+    ...ReturnChildPortNested
+  }
+  widget {
+    ...ReturnWidget
+  }
+  effects {
+    ...PortEffect
+  }
+  choices {
+    value
+    label
+    description
+  }
+  nullable
+  description
+}
+
+fragment ReturnWidget on ReturnWidget {
+  __typename
+  kind
+  ...CustomReturnWidget
+  ...ChoiceReturnWidget
+}
+
+fragment ChoiceReturnWidget on ChoiceReturnWidget {
+  __typename
+  kind
+}
+
+fragment CustomReturnWidget on CustomReturnWidget {
+  __typename
+  kind
+  component
+  props {
+    ...BlokComponentProp
+  }
+}
+
+fragment BlokComponentProp on ComponentProp {
+  key
+  staticValue
+  declaresValue
+  dynamicValue {
+    path
+    literal
+  }
+  agentCall {
+    dependency
+    operation
+    arguments {
+      ...BlokArgument
+    }
+  }
+  utilCall {
+    operation
+    arguments {
+      ...BlokArgument
+    }
+  }
+}
+
+fragment BlokArgument on ActionArgument {
+  ...PortCallLeafArgument
+  utilCall {
+    operation
+    arguments {
+      ...BlokArgumentInner
+    }
+  }
+  agentCall {
+    dependency
+    operation
+    arguments {
+      ...BlokArgumentInner
+    }
+  }
+  valueList {
+    ...BlokArgumentInner
+  }
+  valueDict {
+    ...BlokArgumentInner
+  }
+}
+
+fragment BlokArgumentInner on ActionArgument {
+  ...PortCallInnerArgument
+  agentCall {
+    ...BlokAgentCallLeaf
+  }
+}
+
+fragment BlokAgentCallLeaf on AgentCall {
+  dependency
+  operation
+  arguments {
+    ...PortCallLeafArgument
+  }
+}
+
+fragment ReturnChildPortNested on ReturnPort {
+  __typename
+  provides {
+    key
+    operator
+    value
+  }
+  kind
+  key
+  label
+  identifier
+  referenceUnit
+  proposedUnits
+  dimension
+  children {
+    ...ReturnChildPortDeep
+  }
+  choices {
+    value
+    label
+    description
+  }
+  widget {
+    ...ReturnWidget
+  }
+  effects {
+    ...PortEffect
+  }
+  description
+  nullable
+}
+
+fragment ReturnChildPortDeep on ReturnPort {
+  __typename
+  provides {
+    key
+    operator
+    value
+  }
+  kind
+  key
+  label
+  identifier
+  referenceUnit
+  proposedUnits
+  dimension
+  choices {
+    value
+    label
+    description
+  }
+  widget {
+    ...ReturnWidget
+  }
+  description
+  nullable
+  children {
+    __typename
+    kind
+    key
+    identifier
+    nullable
+    widget {
+      ...ReturnWidget
+    }
+  }
+}
+
+fragment ArgPort on ArgPort {
+  __typename
+  key
+  label
+  nullable
+  description
+  effects {
+    ...PortEffect
+  }
+  widget {
+    ...AssignWidget
+  }
+  kind
+  identifier
+  referenceUnit
+  proposedUnits
+  dimension
+  children {
+    ...ArgChildPort
+  }
+  choices {
+    value
+    label
+    description
+  }
+  default
+  nullable
+  validators {
+    ...Validator
+  }
+  requires {
+    key
+    operator
+    value
+  }
+}
+
+fragment Validator on Validator {
+  call {
+    ...PortCall
+  }
+  dependencies
+  label
+  errorMessage
+  source
+}
+
+fragment ArgChildPort on ArgPort {
+  __typename
+  requires {
+    key
+    operator
+    value
+  }
+  kind
+  key
+  label
+  identifier
+  referenceUnit
+  proposedUnits
+  dimension
+  children {
+    ...ArgChildPortNested
+  }
+  widget {
+    ...AssignWidget
+  }
+  effects {
+    ...PortEffect
+  }
+  validators {
+    ...Validator
+  }
+  choices {
+    value
+    label
+    description
+  }
+  nullable
+  description
+  default
+}
+
+fragment AssignWidget on AssignWidget {
+  __typename
+  kind
+  ...StringAssignWidget
+  ...SearchAssignWidget
+  ...SliderAssignWidget
+  ...ChoiceAssignWidget
+  ...ProxyWidget
+  ...CustomAssignWidget
+  ...StateChoiceAssignWidget
+}
+
+fragment StateChoiceAssignWidget on StateChoiceAssignWidget {
+  __typename
+  kind
+  followValue
+  statePath
+  stateCall {
+    ...PortCall
+  }
+  stateAccessors {
+    optionKey
+    path
+    call {
+      ...PortCall
+    }
+  }
+  dependency
+  dependencies
+}
+
+fragment CustomAssignWidget on CustomAssignWidget {
+  __typename
+  kind
+  followValue
+  component
+  props {
+    ...BlokComponentProp
+  }
+  children
+  dependencies
+  fallback {
+    __typename
+    kind
+    ...StringAssignWidget
+    ...SearchAssignWidget
+    ...SliderAssignWidget
+    ...ChoiceAssignWidget
+    ...ProxyWidget
+    ...StateChoiceAssignWidget
+  }
+}
+
+fragment ProxyWidget on ProxyWidget {
+  __typename
+  kind
+  followValue
+  targetPort
+  targetAction
+  targetDependency
+}
+
+fragment ChoiceAssignWidget on ChoiceAssignWidget {
+  __typename
+  kind
+  followValue
+  placeholder
+}
+
+fragment SliderAssignWidget on SliderAssignWidget {
+  __typename
+  kind
+  followValue
+  min
+  max
+  step
+}
+
+fragment SearchAssignWidget on SearchAssignWidget {
+  __typename
+  kind
+  followValue
+  query
+  ward
+  filters {
+    ...FilterPort
+  }
+  dependencies
+}
+
+fragment FilterPort on ArgPort {
+  __typename
+  kind
+  key
+  identifier
+  widget {
+    ... on SearchAssignWidget {
+      query
+    }
+  }
+  description
+  nullable
+}
+
+fragment StringAssignWidget on StringAssignWidget {
+  __typename
+  kind
+  followValue
+  placeholder
+  asParagraph
+}
+
+fragment ArgChildPortNested on ArgPort {
+  __typename
+  requires {
+    key
+    operator
+    value
+  }
+  kind
+  key
+  label
+  identifier
+  referenceUnit
+  proposedUnits
+  dimension
+  children {
+    ...ArgChildPortDeep
+  }
+  choices {
+    value
+    label
+    description
+  }
+  widget {
+    ...AssignWidget
+  }
+  effects {
+    ...PortEffect
+  }
+  validators {
+    ...Validator
+  }
+  description
+  nullable
+  default
+}
+
+fragment ArgChildPortDeep on ArgPort {
+  __typename
+  requires {
+    key
+    operator
+    value
+  }
+  kind
+  key
+  label
+  identifier
+  referenceUnit
+  proposedUnits
+  dimension
+  choices {
+    value
+    label
+    description
+  }
+  widget {
+    ...AssignWidget
+  }
+  description
+  nullable
+  default
+  children {
+    __typename
+    kind
+    key
+    identifier
+    nullable
+    requires {
+      key
+      operator
+      value
+    }
+    widget {
+      ...AssignWidget
+    }
+  }
+}

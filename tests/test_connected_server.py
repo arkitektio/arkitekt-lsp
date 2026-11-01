@@ -9,7 +9,15 @@ import pytest
 from lsprotocol import types
 from pygls.workspace import Workspace
 
-from arkitekt_lsp.connected import DEFAULT_URL, AgentInfo, Availability
+from arkitekt_lsp.connected import (
+    DEFAULT_URL,
+    ActionsUnavailable,
+    AgentInfo,
+    Availability,
+    Connection,
+    action_lens_title,
+    assign_input,
+)
 from arkitekt_lsp.server import (
     ArkitektLanguageServer,
     CheckKey,
@@ -31,6 +39,7 @@ DEPENDENCY = {"key": "lab", "action_dependencies": [{"key": "ping", "demand": {"
 
 
 class FakeConnection:
+    actions = False
     url = "https://example"
 
     def __init__(self, answer: Availability | None) -> None:
@@ -191,9 +200,10 @@ def test_hovering_a_dependency_in_a_blok_asks_about_what_its_scope_says(served: 
 class FakeLogin:
     """A connection whose login goes as the test says, and that says what was done to it."""
 
+    actions = False
     made: list["FakeLogin"] = []
 
-    def __init__(self, url: str, status: Any, login: Any, version: str = "0") -> None:
+    def __init__(self, url: str, status: Any, login: Any, version: str = "0", actions: bool = False) -> None:
         self.url, self.connected, self.pending, self.stopped = url, False, None, False
         FakeLogin.made.append(self)
 
@@ -231,7 +241,7 @@ def test_logging_out_ends_the_run_before_it_forgets_the_login(served: Any, monke
     ls.connection = connection
     ls.settings.connect, ls.settings.server_url = True, "https://hub"
 
-    def forget(url: str, version: str) -> bool:
+    def forget(url: str, version: str, actions: bool = False) -> bool:
         assert connection.stopped, "a run still going would write the session back"
         assert url == "https://hub"
         return True
@@ -248,7 +258,9 @@ def test_a_client_that_shows_the_login_is_told_the_challenge(served: Any, monkey
     told: list[tuple[str, Any]] = []
     monkeypatch.setattr(ls.protocol, "notify", lambda method, params: told.append((method, params)))
     ls.settings.update({"clientShowsLogin": True})
-    challenge = SimpleNamespace(user_code="AB-CD", verification_uri_complete="https://hub/ok?code=AB-CD", expires_in=600)
+    challenge = SimpleNamespace(
+        user_code="AB-CD", verification_uri_complete="https://hub/ok?code=AB-CD", expires_in=600
+    )
 
     asyncio.run(ls.show_login(challenge))
 
@@ -260,7 +272,9 @@ def test_a_client_that_shows_the_login_is_told_the_challenge(served: Any, monkey
     ]
 
 
-def test_a_pick_of_what_an_agent_offers_becomes_an_edit_of_the_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_pick_of_what_an_agent_offers_becomes_an_edit_of_the_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     file = tmp_path / "app.py"
     source = 'from arkitekt import App\n\napp = App("mine")\n'
     file.write_text(source)
@@ -320,3 +334,29 @@ def test_the_f_string_warning_follows_its_setting(served: Any, tmp_path: Path) -
     ls.settings.update({"check": {"warnOnFStrings": False}})
     ls.refresh(uri)
     assert published[-1].diagnostics == []
+
+
+def test_a_forwarded_query_cannot_change_anything_whatever_the_page_sent() -> None:
+    """The page is not trusted to keep to reads: the refusal is here, before any client is asked."""
+    connection = Connection("https://example", lambda *_, **__: None, None, actions=True)  # type: ignore[arg-type]
+    connection.runtime = object()  # any client it asked for would fail on this
+
+    with pytest.raises(ActionsUnavailable, match="never a mutation"):
+        asyncio.run(connection.query("rekuest", "mutation Go { assign { id } }", {}))
+
+
+def test_the_lens_says_whether_an_action_can_run() -> None:
+    assert "Not on the server" in action_lens_title(None)
+    assert "no agent connected" in action_lens_title({"implementations": [{"agent": {"connected": False}}]})
+    assert action_lens_title({"implementations": [{"agent": {"connected": True}}]}) == "$(play) Run · 1 agent"
+
+
+def test_pins_only_travel_with_the_implementation_they_are_for() -> None:
+    pins = [{"key": "stage", "autoResolve": False, "mappedAgents": [{"key": "stage", "agent": "7"}]}]
+
+    pinned = assign_input("abc", {"x": 1}, "ref", "12", pins)
+    assert pinned["implementation"] == "12" and pinned["dependencies"] == pins
+
+    # An action target has no dependencies of its own: the server would have nothing to bind them to.
+    anywhere = assign_input("abc", {"x": 1}, "ref", None, pins)
+    assert "implementation" not in anywhere and "dependencies" not in anywhere

@@ -29,6 +29,7 @@ import logging
 import os
 import sys
 import tempfile
+import uuid
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -43,8 +44,10 @@ from pygls.workspace import TextDocument
 from arkitekt_lsp.apps import DECLARES_APP, find_apps, names_file, project_root
 from arkitekt_lsp.connected import (
     DEFAULT_URL,
+    ActionsUnavailable,
     Availability,
     Connection,
+    action_lens_title,
     class_span,
     declared_protocols,
     dependency_key_at,
@@ -94,6 +97,16 @@ STATUS = "arkitekt/status"
 """Told to the client whenever a check starts or ends."""
 APPS = "arkitekt/apps"
 """Asked by the client: the apps of the workspace, to choose from."""
+QUERY = "arkitekt/query"
+"""Asked by the client's panel: a read on one service. Needs ``server.actions``."""
+ACTION = "arkitekt/action"
+"""Asked by the client's panel: an action of the server, by hash, with its ports."""
+CALL = "arkitekt/call"
+"""Asked by the client's panel: start an action. Its events follow as ``TASK`` notifications."""
+CANCEL = "arkitekt/cancel"
+"""Asked by the client's panel: cancel a task."""
+TASK = "arkitekt/task"
+"""Told to the client: a task's new events, and whether it has ended."""
 REGIONS = "bsx/regions"
 CHECK = "arkitekt/check"
 
@@ -126,6 +139,8 @@ class Settings:
     target: str | None = None
     connect: bool = False
     """Ask rekuest about dependencies. Off, the server talks to nothing."""
+    actions: bool = False
+    """Also log in as the app that may start tasks and read mikro, for the client's action panel."""
     server_url: str = DEFAULT_URL
     server_from_flags: bool = False
     """``--connect`` or ``--server`` was given: what the editor configures does not move it."""
@@ -163,6 +178,8 @@ class Settings:
                 self.connect = server["connect"]
             if isinstance(server.get("url"), str):
                 self.server_url = server["url"].strip() or DEFAULT_URL
+        if isinstance(server, dict) and isinstance(server.get("actions"), bool):
+            self.actions = server["actions"]
 
 
 @dataclass(frozen=True)
@@ -189,6 +206,8 @@ class CheckState:
     """Per file (real path), the blok each of its literals held when the report came."""
     availability: dict[str, Availability] = field(default_factory=dict[str, Availability])
     """Per protocol the report lists, by name, who the server said would satisfy it."""
+    offered: dict[str, dict[str, Any] | None] = field(default_factory=dict[str, dict[str, Any] | None])
+    """Per action hash the report lists, what the server knows by it (None: nothing): the panel's lens."""
     process: asyncio.subprocess.Process | None = None
     generation: int = 0
 
@@ -409,18 +428,19 @@ class ArkitektLanguageServer(LanguageServer):
         """Make the connection what the settings say: none, or one to their server."""
         wanted = self.settings.server_url if self.settings.connect else None
         current = self.connection
-        if current is not None and current.url == wanted:
+        if current is not None and current.url == wanted and current.actions == self.settings.actions:
             return
         if current is not None:
             self.connection = None
             await current.stop()
             for state in self.checks.values():
                 state.availability = {}
+                state.offered = {}
             self.refresh_all()
             self.connection_status("off")
         if wanted is None:
             return
-        connection = Connection(wanted, self.connection_status, self.show_login, __version__)
+        connection = Connection(wanted, self.connection_status, self.show_login, __version__, self.settings.actions)
         self.connection = connection
         await connection.start()
         if self.connection is not connection:  # turned off or moved while the login was pending
@@ -458,7 +478,9 @@ class ArkitektLanguageServer(LanguageServer):
         url = self.connection.url if self.connection is not None else self.settings.server_url
         self.settings.connect = False
         await self.connect_as_configured()
-        forgotten = await asyncio.to_thread(forget_login, url, __version__)
+        # Both logins: the one that may call must not outlive turning the setting off.
+        forgotten = await asyncio.to_thread(forget_login, url, __version__, True)
+        forgotten = await asyncio.to_thread(forget_login, url, __version__, False) or forgotten
         self.connection_status("off")
         return forgotten
 
@@ -473,10 +495,64 @@ class ArkitektLanguageServer(LanguageServer):
             if answer is not None:
                 answers[protocol["name"]] = answer
         state.availability = answers
+        if connection.actions and connection.connected:
+            state.offered = await self.ask_about_actions(connection, state.last_good)
         self.refresh_all()
         capabilities = self.protocol.client_capabilities.workspace
         if capabilities is not None and capabilities.code_lens is not None and capabilities.code_lens.refresh_support:
             self.workspace_code_lens_refresh(None)
+
+    async def ask_about_actions(
+        self, connection: Connection, report: dict[str, Any]
+    ) -> dict[str, dict[str, Any] | None]:
+        """What the server knows by each action's hash; an action it could not be asked about is left out."""
+        hashes = [str(action["hash"]) for action in report.get("actions") or ()]
+        answers = await asyncio.gather(*(connection.action(hash_) for hash_ in hashes), return_exceptions=True)
+        for answer in answers:
+            if isinstance(answer, BaseException):
+                logger.warning("Asking the server about an action failed: %s", answer)
+        return {hash_: answer for hash_, answer in zip(hashes, answers) if not isinstance(answer, BaseException)}
+
+    def action_lenses(self, path: str, document: Any) -> list[types.CodeLens]:  # noqa: ANN401 - pygls' document
+        """A lens above each action of the file at real ``path``: run it, or why it cannot run yet."""
+        lenses: list[types.CodeLens] = []
+        for state in self.checks.values():
+            for action in (state.last_good or {}).get("actions") or ():
+                file, line, hash_ = action.get("file"), action.get("line"), str(action.get("hash"))
+                if not isinstance(file, str) or not isinstance(line, int) or os.path.realpath(file) != path:
+                    continue
+                if hash_ not in state.offered or line < 1 or line > len(document.lines):
+                    continue
+                at = types.Position(line=line - 1, character=0)
+                lenses.append(
+                    types.CodeLens(
+                        range=types.Range(start=at, end=at),
+                        command=types.Command(
+                            title=action_lens_title(state.offered[hash_]),
+                            command="arkitekt.runAction",
+                            arguments=[{"hash": hash_, "name": action.get("name") or action.get("interface")}],
+                        ),
+                    )
+                )
+        return lenses
+
+    def follow_task(self, connection: Connection, task: str) -> None:
+        """Tell the client what ``task`` reports, until it ends or the connection goes away."""
+
+        def told(events: list[dict[str, Any]], done: bool) -> None:
+            self.protocol.notify(TASK, {"task": task, "events": events, "done": done})
+
+        async def follow() -> None:
+            try:
+                await connection.follow(task, told)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:  # noqa: BLE001 - the page says it lost track, the task goes on
+                self.protocol.notify(
+                    TASK, {"task": task, "events": [], "done": True, "error": str(error) or type(error).__name__}
+                )
+
+        asyncio.ensure_future(follow())
 
     def about_protocols(self, path: str, text: str) -> list[tuple[tuple[int, int], dict[str, Any], Availability]]:
         """The protocols declared in the file at real ``path``, where each is now and what was said."""
@@ -733,6 +809,7 @@ def code_lens(ls: ArkitektLanguageServer, params: types.CodeLensParams) -> list[
                 command=types.Command(title=lens_title(answer), command="arkitekt.rekuest.refresh"),
             )
         )
+    lenses.extend(ls.action_lenses(os.path.realpath(fs_path), document))
     if ls.settings.client_picks_dependencies and ls.connection.connected:
         for match in DECLARES_APP.finditer(document.source):
             at = document.client_position_at_offset(match.start())
@@ -757,7 +834,11 @@ async def hover(ls: ArkitektLanguageServer, params: types.HoverParams) -> types.
     path = os.path.realpath(fs_path)
     for span, protocol, answer in ls.about_protocols(path, document.source):
         if span[0] <= offset <= span[1]:
-            return types.Hover(contents=types.MarkupContent(kind=types.MarkupKind.Markdown, value=hover_markdown(protocol["name"], answer)))
+            return types.Hover(
+                contents=types.MarkupContent(
+                    kind=types.MarkupKind.Markdown, value=hover_markdown(protocol["name"], answer)
+                )
+            )
     literals = blok_literals(document.source)
     for index, literal in enumerate(literals):
         inside = literal.to_value(offset)
@@ -768,7 +849,11 @@ async def hover(ls: ArkitektLanguageServer, params: types.HoverParams) -> types.
         dependency = next((d for d in known[1].get("dependencies") or () if d.get("key") == key), None)
         answer = await connection.availability(dependency) if dependency is not None else None
         if answer is not None:
-            return types.Hover(contents=types.MarkupContent(kind=types.MarkupKind.Markdown, value=hover_markdown(f"deps.{key}", answer)))
+            return types.Hover(
+                contents=types.MarkupContent(
+                    kind=types.MarkupKind.Markdown, value=hover_markdown(f"deps.{key}", answer)
+                )
+            )
     return None
 
 
@@ -809,7 +894,12 @@ async def rekuest_offers(ls: ArkitektLanguageServer, params: Any) -> dict[str, A
                 "version": offer["version"],
                 "className": class_name_for(offer["app"], taken),
                 "actions": [
-                    {"key": a["key"], "name": a.get("name"), "signature": signature(a, known), "missing": action_missing(a, known)}
+                    {
+                        "key": a["key"],
+                        "name": a.get("name"),
+                        "signature": signature(a, known),
+                        "missing": action_missing(a, known),
+                    }
                     for a in offer["actions"]
                 ],
                 "states": [{"key": s["key"], "missing": state_missing(s, known)} for s in offer["states"]],
@@ -863,6 +953,69 @@ async def rekuest_login(ls: ArkitektLanguageServer, params: Any) -> None:  # noq
 @server.feature(REKUEST_LOGOUT)
 async def rekuest_logout(ls: ArkitektLanguageServer, params: Any) -> dict[str, bool]:  # noqa: ANN401 - a custom request
     return {"forgotten": await ls.log_out()}
+
+
+# Arguments and variables travel as JSON text: pygls turns a custom request's params into objects by
+# their keys, and these keys are an app's own (`class`, `_x`), not names it can make attributes of.
+
+
+def _answer_of(error: Exception) -> dict[str, Any]:
+    """A failed panel request as the panel shows it: never a protocol error, the page has to say why."""
+    if isinstance(error, ActionsUnavailable):
+        return {"error": str(error)}
+    return {"error": f"{type(error).__name__}: {error}" if str(error) else type(error).__name__}
+
+
+def _connection_for_actions(ls: ArkitektLanguageServer) -> Connection:
+    connection = ls.connection
+    if connection is None or not connection.connected or not connection.actions:
+        raise ActionsUnavailable("Actions are off: set arkitekt.server.actions and connect to the server.")
+    return connection
+
+
+@server.feature(QUERY)
+async def query(ls: ArkitektLanguageServer, params: Any) -> dict[str, Any]:  # noqa: ANN401 - a custom request
+    try:
+        data = await _connection_for_actions(ls).query(
+            params.service, params.document, json.loads(params.variablesJson)
+        )
+    except Exception as error:  # noqa: BLE001 - the page says what went wrong
+        return _answer_of(error)
+    return {"data": data}
+
+
+@server.feature(ACTION)
+async def action(ls: ArkitektLanguageServer, params: Any) -> dict[str, Any]:  # noqa: ANN401 - a custom request
+    try:
+        return {"action": await _connection_for_actions(ls).action(params.hash)}
+    except Exception as error:  # noqa: BLE001 - the page says what went wrong
+        return _answer_of(error)
+
+
+@server.feature(CALL)
+async def call(ls: ArkitektLanguageServer, params: Any) -> dict[str, Any]:  # noqa: ANN401 - a custom request
+    try:
+        connection = _connection_for_actions(ls)
+        task = await connection.call(
+            params.hash,
+            json.loads(params.argsJson),
+            str(uuid.uuid4()),
+            getattr(params, "implementation", None),
+            json.loads(getattr(params, "dependenciesJson", None) or "[]"),
+        )
+    except Exception as error:  # noqa: BLE001 - the page says what went wrong
+        return _answer_of(error)
+    ls.follow_task(connection, str(task["id"]))
+    return {"task": str(task["id"])}
+
+
+@server.feature(CANCEL)
+async def cancel(ls: ArkitektLanguageServer, params: Any) -> dict[str, Any]:  # noqa: ANN401 - a custom request
+    try:
+        await _connection_for_actions(ls).cancel(params.task)
+    except Exception as error:  # noqa: BLE001 - the page says what went wrong
+        return _answer_of(error)
+    return {"cancelled": True}
 
 
 @server.feature(REGIONS)

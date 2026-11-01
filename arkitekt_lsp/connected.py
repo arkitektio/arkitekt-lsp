@@ -9,6 +9,10 @@ app declares (the report's ``protocols``, a blok's ``scope``) is a set of demand
 each possibly with a different implementation, which is what a dependency asks for.
 
 Whatever goes wrong here (a login nobody approves, a server that is gone) leaves the server local.
+
+With ``arkitekt.server.actions`` as well, it logs in as a second app that may also start tasks and
+read mikro (:mod:`.rekuest_call`), for the editor's action panel. Queries that panel forwards arrive
+as data, so :func:`read_only_problem` keeps them to reads here, whatever the page says it sent.
 """
 
 import asyncio
@@ -37,6 +41,29 @@ FRESH_FOR = 30.0
 """How long an answer about a dependency holds; a manual refresh drops it."""
 AGENT_LIMIT = 100
 """How many agents are listed per dependency: a count of this many reads as "at least"."""
+
+POLL_FROM = 0.3
+POLL_TO = 3.0
+"""How often a task's events are read: at first, and once it has run for a while."""
+FINAL_EVENTS = frozenset({"COMPLETED", "FAILED", "CRITICAL", "CANCELLED", "DENIED", "INTERRUPTED", "LOST"})
+"""The event kinds after which a task reports nothing more."""
+
+
+def read_only_problem(document: str) -> str | None:
+    """Why ``document`` may not run as a forwarded read, if so: exactly one query, nothing else."""
+    from graphql import GraphQLError, OperationDefinitionNode, parse
+
+    try:
+        definitions = parse(document).definitions
+    except GraphQLError:
+        return "That is not a GraphQL document."
+    operations = [node for node in definitions if isinstance(node, OperationDefinitionNode)]
+    if any(operation.operation.value != "query" for operation in operations):
+        return "Only queries can run here: a change goes through an action, never a mutation."
+    if len(operations) != 1:
+        return "The document must hold exactly one query."
+    return None
+
 
 # -- what to ask
 
@@ -82,10 +109,7 @@ def filters_for(dependency: Mapping[str, Any]) -> dict[str, Any]:
 
 def slot_filters(dependency: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     """Per slot, the ``AgentFilter`` of the agents that meet that slot alone: what says which is unmet."""
-    return {
-        key: {**_identity(dependency), field: [demand]}
-        for key, field, _, demand in _slots(dependency)
-    }
+    return {key: {**_identity(dependency), field: [demand]} for key, field, _, demand in _slots(dependency)}
 
 
 # -- what it answered
@@ -141,6 +165,17 @@ def lens_title(availability: Availability) -> str:
     return title
 
 
+def action_lens_title(action: Mapping[str, Any] | None) -> str:
+    """One line above an action: run it, and who would run it; or what is missing for that."""
+    if action is None:
+        return "$(play) Not on the server yet: arkitekt run dev"
+    agents = [i["agent"] for i in action.get("implementations") or () if i.get("agent")]
+    connected = sum(1 for agent in agents if agent.get("connected"))
+    if not connected:
+        return "$(play) Run · no agent connected: arkitekt run dev"
+    return f"$(play) Run · {connected} agent{'' if connected == 1 else 's'}"
+
+
 def problem(dependency: Mapping[str, Any], availability: Availability) -> tuple[str, str] | None:
     """The level and message when too few agents satisfy ``dependency``; never an error, because
     what is missing may simply not be running yet."""
@@ -153,7 +188,10 @@ def problem(dependency: Mapping[str, Any], availability: Availability) -> tuple[
     level = "info" if dependency.get("optional") else "warning"
     if total == 0:
         return level, f"No agent satisfies this dependency.{where}"
-    return level, f"{total} agent{'' if total == 1 else 's'} satisfy this dependency, it asks for at least {needed}.{where}"
+    return (
+        level,
+        f"{total} agent{'' if total == 1 else 's'} satisfy this dependency, it asks for at least {needed}.{where}",
+    )
 
 
 def hover_markdown(name: str, availability: Availability) -> str:
@@ -215,8 +253,40 @@ Status = Callable[..., None]
 Login = Callable[["DeviceCodeChallenge"], Awaitable[None]]
 
 
+class ActionsUnavailable(Exception):
+    """What the panel should say instead of an answer."""
+
+
+def assign_input(
+    action_hash: str,
+    args: Mapping[str, Any],
+    reference: str,
+    implementation: str | None = None,
+    dependencies: Sequence[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """What an assign takes. Without ``implementation`` the server picks the agent, as ``arkitekt call
+    remote`` does. Dependencies belong to an implementation, so pins only travel with one."""
+    input_: dict[str, Any] = {"actionHash": action_hash, "args": dict(args), "capture": False, "reference": reference}
+    if implementation:
+        input_["implementation"] = implementation
+        if dependencies:
+            input_["dependencies"] = [dict(pin) for pin in dependencies]
+    return input_
+
+
+def app_for(version: str, actions: bool) -> Any:  # noqa: ANN401 - App loads only when connecting
+    """The app to log in as: the read-only one, or the one that may also call."""
+    if actions:
+        from arkitekt_lsp.rekuest_call import actions_app
+
+        return actions_app(version)
+    from arkitekt_lsp.rekuest_read import lsp_app
+
+    return lsp_app(version)
+
+
 class Connection:
-    """One read-only login at ``url``, and what it has answered lately.
+    """One login at ``url``, and what it has answered lately.
 
     Args:
         url: The coordination server.
@@ -225,8 +295,10 @@ class Connection:
         login: Shows the user a device code challenge.
     """
 
-    def __init__(self, url: str, status: Status, login: Login, version: str = "0.0.0") -> None:
+    def __init__(self, url: str, status: Status, login: Login, version: str = "0.0.0", actions: bool = False) -> None:
         self.url = url
+        self.actions = actions
+        """Log in as the app that may also call actions and read mikro."""
         self.status = status
         self.login = login
         self.version = version
@@ -251,10 +323,14 @@ class Connection:
             # Only here: a server that is not asked to connect never loads any of this.
             from arkitekt import connect
 
-            from arkitekt_lsp.rekuest_read import RekuestRead, lsp_app
+            from arkitekt_lsp.rekuest_read import RekuestRead
 
             runtime = connect(
-                lsp_app(self.version), url=self.url, headless=True, device_code_hook=self._show_login, mesh=False
+                app_for(self.version, self.actions),
+                url=self.url,
+                headless=True,
+                device_code_hook=self._show_login,
+                mesh=False,
             )
             self.pending = asyncio.ensure_future(asyncio.wait_for(runtime.__aenter__(), LOGIN_TIMEOUT))
             await self.pending
@@ -287,6 +363,59 @@ class Connection:
     def forget(self) -> None:
         """Drop what it knows, so the next question reaches the server."""
         self.answers.clear()
+
+    def _client(self, service: str) -> Any:  # noqa: ANN401 - the clients load only when connecting
+        """The client for ``service``; raises what the panel should say when there is none."""
+        if self.runtime is None or not self.actions:
+            raise ActionsUnavailable("Actions are off: set arkitekt.server.actions and connect to the server.")
+        from arkitekt_lsp.rekuest_call import SERVICES
+
+        kind = SERVICES.get(service)
+        if kind is None:
+            raise ActionsUnavailable(f"The editor cannot ask the {service} service.")
+        return self.runtime.require(kind)
+
+    async def query(self, service: str, document: str, variables: Mapping[str, Any]) -> dict[str, Any]:
+        """A read a widget or a blok carries as text, on ``service``."""
+        problem_ = read_only_problem(document)
+        if problem_ is not None:
+            raise ActionsUnavailable(problem_)
+        return await asyncio.wait_for(self._client(service).aquery(document, variables), QUERY_TIMEOUT)
+
+    async def action(self, action_hash: str) -> dict[str, Any] | None:
+        """The action the server knows by ``action_hash``, with its ports; None when it knows none."""
+        return await asyncio.wait_for(self._client("rekuest").aaction(action_hash), QUERY_TIMEOUT)
+
+    async def call(
+        self,
+        action_hash: str,
+        args: Mapping[str, Any],
+        reference: str,
+        implementation: str | None = None,
+        dependencies: Sequence[Mapping[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Start the action as a root task; see :func:`assign_input` for who runs it."""
+        input_ = assign_input(action_hash, args, reference, implementation, dependencies)
+        return await asyncio.wait_for(self._client("rekuest").aassign(input_), QUERY_TIMEOUT)
+
+    async def cancel(self, task: str) -> dict[str, Any]:
+        return await asyncio.wait_for(self._client("rekuest").acancel(task), QUERY_TIMEOUT)
+
+    async def follow(self, task: str, told: Callable[[list[dict[str, Any]], bool], None]) -> None:
+        """Tell ``told(new events, done)`` until the task ends or this is cancelled."""
+        seen: set[str] = set()
+        wait = POLL_FROM
+        while True:
+            events = await asyncio.wait_for(self._client("rekuest").aevents(task), QUERY_TIMEOUT)
+            new = [event for event in events if event["id"] not in seen]
+            seen.update(event["id"] for event in new)
+            done = any(event["kind"] in FINAL_EVENTS for event in events)
+            if new or done:
+                told(new, done)
+            if done:
+                return
+            wait = POLL_FROM if new else min(wait * 1.5, POLL_TO)
+            await asyncio.sleep(wait)
 
     async def offers(self) -> dict[str, dict[str, Any]] | None:
         """Per agent id, what it offers, as a picker and a dependency read it; None without an answer."""
@@ -333,13 +462,11 @@ class Connection:
         return answer
 
 
-def forget_login(url: str, version: str = "0.0.0") -> bool:
+def forget_login(url: str, version: str = "0.0.0", actions: bool = False) -> bool:
     """Revoke the login at ``url`` and forget it here; whether there was one. Blocks: a thread's work."""
     from arkitekt import logout
 
-    from arkitekt_lsp.rekuest_read import lsp_app
-
-    return logout(lsp_app(version), url=url)
+    return logout(app_for(version, actions), url=url)
 
 
 def declared_protocols(report: Mapping[str, Any]) -> Sequence[Mapping[str, Any]]:
@@ -349,9 +476,12 @@ def declared_protocols(report: Mapping[str, Any]) -> Sequence[Mapping[str, Any]]
 
 __all__ = [
     "DEFAULT_URL",
+    "ActionsUnavailable",
     "AgentInfo",
     "Availability",
     "Connection",
+    "action_lens_title",
+    "assign_input",
     "class_span",
     "declared_protocols",
     "dependency_key_at",
@@ -361,5 +491,6 @@ __all__ = [
     "lens_title",
     "offer_of",
     "problem",
+    "read_only_problem",
     "slot_filters",
 ]
