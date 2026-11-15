@@ -2,20 +2,27 @@
 
 ``arkitekt check`` imports the app, so it runs on save. Between saves an edited blok is checked
 here, in process, with the validator ``arkitekt check`` runs (:func:`check_blok_tree`): the
-language and the catalogs, and what the last check said the blok declares (its scope, see
-:mod:`.scopes`). A blok no check has seen has an empty scope, so beyond what the parser refuses
-only the findings that do not depend on what the blok declares are told; a reference to a
-dependency, a local or a query waits for the check.
+language and the catalog the blok is written for, and what the last check said the blok
+declares (its scope, see :mod:`.scopes`). A blok no check has seen has an empty scope, so
+beyond what the parser refuses only the findings that do not depend on what the blok declares
+are told; a reference to a dependency, a local or a query waits for the check.
+
+A blok names the catalog it is written for (the scope's ``catalog``): the base catalog when it
+names none, which ships with arkitekt-spec, as does a snapshot of the Orkestrator's. Any other
+is pulled from the address it is published at, once per session
+(:func:`arkitekt_spec.blok.catalogs.fetch.resolve_catalog`: https only, capped in size and
+time, read as data and kept for the next time). One that cannot be had leaves what it adds
+unchecked: the base catalog still is.
 """
 
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
 
 from arkitekt_spec.blok.bsx import parse_bsx_with_spans
-from arkitekt_spec.blok.catalogs import default_view
-from arkitekt_spec.blok.vocabulary import BlokError
-from arkitekt_spec.declare.blok.registry import catalogs_of
+from arkitekt_spec.blok.catalogs import BlokView, blok_view, default_view, is_catalog_target, known_catalog
+from arkitekt_spec.blok.catalogs.fetch import CatalogUnavailable, resolve_catalog
+from arkitekt_spec.blok.vocabulary import BlokError, load_vocabulary
 from arkitekt_spec.declare.blok.validate import BlokScope, check_blok_tree, place
 
 from arkitekt_lsp.placement import Span, place_in_literal
@@ -50,12 +57,42 @@ def _judged_by_scope(code: str) -> bool:
     return code.split(".", 1)[0] not in UNSCOPED
 
 
-def live_findings(literal: BlokLiteral, scope: Mapping[str, Any] | None = None) -> list[LiveFinding]:
-    """What the language and the default catalogs find in ``literal``, without the app.
+_unavailable: set[str] = set()
+"""Catalogs that could not be had this session: not asked for again on every keystroke."""
 
-    With ``scope`` (what the last check said this blok declares) a reference is judged too.
+PULL_TIMEOUT = 3.0
+"""Seconds an editor waits for a catalog: a check on save may wait longer."""
+
+
+def view_for(catalog: str | None) -> BlokView:
+    """The view a blok written for ``catalog`` is read against while it is typed.
+
+    The base catalog's when it names none. One that ships, was pulled before or can be pulled
+    now is read whole; any other (a name only its app declares, an address nothing answers at)
+    is the base catalog's with nothing reported unknown.
     """
-    view = default_view()
+    if catalog is None:
+        return default_view()
+    if known_catalog(catalog) is None and catalog not in _unavailable:
+        # Only an address is pulled: a plain name is a catalog the app declared, which a check knows.
+        if is_catalog_target(catalog) and load_vocabulary().catalog_id.fullmatch(catalog):
+            try:
+                resolve_catalog(catalog, timeout=PULL_TIMEOUT)
+            except CatalogUnavailable:
+                _unavailable.add(catalog)
+        else:
+            _unavailable.add(catalog)
+    return blok_view(catalog) if known_catalog(catalog) is not None else blok_view(complete=False)
+
+
+def live_findings(literal: BlokLiteral, scope: Mapping[str, Any] | None = None) -> list[LiveFinding]:
+    """What the language and the blok's catalog find in ``literal``, without the app.
+
+    With ``scope`` (what the last check said this blok declares) a reference is judged too,
+    and the blok is read against the catalog it names.
+    """
+    named = scope.get("catalog") if scope is not None else None
+    view = view_for(named if isinstance(named, str) else None)
     try:
         tree, spans = parse_bsx_with_spans(literal.value, view=view)
     except BlokError as error:
@@ -71,13 +108,11 @@ def live_findings(literal: BlokLiteral, scope: Mapping[str, Any] | None = None) 
             )
         ]
     # Every finding, errors too: one the empty scope gets wrong must not hide the rest.
-    # The catalogs it draws from, as the app's own check takes them when none are declared.
     if scope is not None:
         checked = to_blok_scope(scope)
-        checked = replace(checked, catalogs=checked.catalogs or catalogs_of(tree, view))
         told = _judged_by_scope
     else:
-        checked = BlokScope(kind=literal.kind, context=literal.context, catalogs=catalogs_of(tree, view))
+        checked = BlokScope(kind=literal.kind, context=literal.context)
         told = _scope_free
     findings = [place(finding, spans) for finding in check_blok_tree(tree, checked, view)]
     placed: list[LiveFinding] = []
@@ -97,4 +132,4 @@ def live_findings(literal: BlokLiteral, scope: Mapping[str, Any] | None = None) 
     return placed
 
 
-__all__ = ["SCOPE_FREE", "UNSCOPED", "LiveFinding", "live_findings"]
+__all__ = ["SCOPE_FREE", "UNSCOPED", "LiveFinding", "live_findings", "view_for"]

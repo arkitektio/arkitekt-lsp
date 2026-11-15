@@ -16,7 +16,7 @@ SOURCE = (
 )
 PATH = os.path.realpath("/app.py")
 """As the server passes it: resolved, which on Windows gives it a drive."""
-SCOPE = {"kind": "action", "context": "HTML", "dependencies": [{"key": "lab"}], "args": ["a"], "catalogs": []}
+SCOPE = {"kind": "action", "context": "HTML", "dependencies": [{"key": "lab"}], "args": ["a"], "catalog": None}
 REPORT = {
     "bloks": [
         {"blok": "panel", "source": "<Html><Card /></Html>", "file": "/app.py", "call_line": 3, "scope": {"kind": "agent"}},

@@ -1,6 +1,6 @@
 """Which blok a literal is, once a check has seen it, so its scope follows it while it is edited.
 
-A check's report (version 2) carries each blok's ``scope``: its dependencies, locals, queries
+A check's report (version 3) carries each blok's ``scope``: its dependencies, locals, queries
 and args, what ``deps.<key>`` and ``args.<key>`` resolve against. What is being typed no longer
 equals the source the check saw, so a literal is matched to its blok by where it is: when the
 report comes, each literal of a file it names is anchored to the blok the check found there.
@@ -75,7 +75,6 @@ def to_blok_scope(scope: Mapping[str, Any]) -> BlokScope:
         queries=tuple(BlokQueryInput.model_validate(query) for query in scope.get("queries") or ()),
         subscriptions=tuple(BlokSubscriptionInput.model_validate(s) for s in scope.get("subscriptions") or ()),
         args=tuple(args) if isinstance(args, list) else None,
-        catalogs=tuple(scope.get("catalogs") or ()),
         assets=frozenset(assets) if isinstance(assets, list) else None,
     )
 
