@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
 
+from arkitekt_spec.blok.catalogs.fetch import CatalogUnavailable
 from lsprotocol import types
 from pygls.lsp.server import LanguageServer
 from pygls.uris import from_fs_path, to_fs_path
@@ -67,7 +68,7 @@ from arkitekt_lsp.declare import (
     state_missing,
     write_dependency,
 )
-from arkitekt_lsp.live import live_findings
+from arkitekt_lsp.live import forget_unavailable, is_address, live_findings, published_catalogs
 from arkitekt_lsp.placement import Span, place
 from arkitekt_lsp.regions import BlokLiteral, blok_literals, generated_bloks
 from arkitekt_lsp.scopes import Anchors, anchor_bloks, blok_of
@@ -97,6 +98,8 @@ STATUS = "arkitekt/status"
 """Told to the client whenever a check starts or ends."""
 APPS = "arkitekt/apps"
 """Asked by the client: the apps of the workspace, to choose from."""
+CATALOG = "arkitekt/catalog"
+"""Asked by the client: a published catalog (and those it extends), as published, to complete against."""
 QUERY = "arkitekt/query"
 """Asked by the client's panel: a read on one service. Needs ``server.actions``."""
 ACTION = "arkitekt/action"
@@ -137,6 +140,9 @@ class Settings:
     warn_on_fstrings: bool = True
     """Warn at a blok written as an f-string: generated once, when the app starts."""
     target: str | None = None
+    catalogs: tuple[str, ...] = ()
+    """The published catalogs the apps here are written for, by address: each check pulls them
+    (``arkitekt check --catalog``), so a blok naming one is held to it."""
     connect: bool = False
     """Ask rekuest about dependencies. Off, the server talks to nothing."""
     actions: bool = False
@@ -168,6 +174,9 @@ class Settings:
             self.warn_on_fstrings = options["warnOnFStrings"]
         if "target" in options:
             self.target = options["target"] or None
+        if isinstance(options.get("catalogs"), list):
+            # Only addresses: nothing else is ever pulled, whatever a workspace's settings say.
+            self.catalogs = tuple(dict.fromkeys(catalog for catalog in options["catalogs"] if is_address(catalog)))
         if options.get("clientPicksDependencies") is True:
             self.client_picks_dependencies = True
         if options.get("clientShowsLogin") is True:
@@ -289,6 +298,8 @@ class ArkitektLanguageServer(LanguageServer):
         with tempfile.TemporaryDirectory(prefix="arkitekt-lsp-") as directory:
             out = Path(directory) / "report.json"
             args = ["--work-dir", key.root, "check", "--json-out", str(out)]
+            for catalog in self.settings.catalogs:
+                args += ["--catalog", catalog]
             if key.target is not None:
                 args.append(key.target)
             process = await asyncio.create_subprocess_exec(
@@ -578,6 +589,17 @@ class ArkitektLanguageServer(LanguageServer):
             self.checks[key] = CheckState()  # now, so a second open of the same app does not check it twice
             asyncio.ensure_future(self.run_check(key))
 
+    def catalogs_changed(self) -> None:
+        """The catalogs the checks pull changed: what was found against the old set goes."""
+        for key in list(self.checks):
+            state = self.checks.pop(key)
+            state.generation += 1
+            if state.process is not None and state.process.returncode is None:
+                state.process.kill()
+        for uri in list(self.workspace.text_documents):
+            self.check_if_new(uri)
+            self.refresh(uri)
+
     def target_changed(self, before: str | None) -> None:
         """Another app was chosen: what the old choice found goes, and the open files check the new one."""
         for key in [key for key in self.checks if key.target == before]:
@@ -760,9 +782,14 @@ async def did_change_configuration(ls: ArkitektLanguageServer, params: types.Did
     settings = params.settings
     before = ls.settings.target
     warned = ls.settings.warn_on_fstrings
+    catalogs = ls.settings.catalogs
     ls.settings.update(settings.get("arkitekt") if isinstance(settings, dict) else None)
     if ls.settings.target != before:
         ls.target_changed(before)
+    if ls.settings.catalogs != catalogs:
+        # Another set of catalogs: what could not be had is asked for again, and every app is checked anew.
+        forget_unavailable()
+        ls.catalogs_changed()
     if ls.settings.warn_on_fstrings != warned:
         ls.refresh_all()
     await ls.connect_as_configured()
@@ -871,6 +898,23 @@ async def rekuest_refresh(ls: ArkitektLanguageServer, params: Any) -> None:  # n
 async def apps(ls: ArkitektLanguageServer, params: Any) -> dict[str, Any]:  # noqa: ANN401 - a custom request
     """The apps of the workspace and the current choice, read rather than imported."""
     return {"apps": await asyncio.to_thread(find_apps, ls.folders()), "target": ls.settings.target}
+
+
+@server.feature(CATALOG)
+async def catalog(ls: ArkitektLanguageServer, params: Any) -> dict[str, Any]:  # noqa: ANN401 - a custom request
+    """A published catalog and those it extends, as published (JSON texts, the nearest the base first).
+
+    Only an address is pulled, over https, capped in size and time, and read as data. ``refresh``
+    pulls it again instead of using the kept copy.
+    """
+    identifier = getattr(params, "id", None)
+    if not isinstance(identifier, str):
+        return {"id": None, "catalogs": [], "error": "No catalog was named."}
+    try:
+        texts = await asyncio.to_thread(published_catalogs, identifier, refresh=getattr(params, "refresh", False) is True)
+    except CatalogUnavailable as error:
+        return {"id": identifier, "catalogs": [], "error": str(error)}
+    return {"id": identifier, "catalogs": texts, "error": None}
 
 
 @server.feature(REKUEST_OFFERS)

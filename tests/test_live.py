@@ -72,3 +72,48 @@ def test_a_name_only_the_app_declares_is_never_pulled(monkeypatch) -> None:  # n
     monkeypatch.setattr(live, "_unavailable", set())
 
     assert _scoped('app.blok("p", "<Html><Gauge /></Html>")\n', "electron") == []
+
+
+# -- a published catalog, handed to a client
+
+LAB_CATALOG = (
+    '{"id": "' + LAB + '", "name": "lab", "version": 1, "minor": 0, "extends": "https://arkitekt.live/catalogs/base/v3",'
+    ' "description": "What the lab draws beyond the base catalog.",'
+    ' "components": [{"name": "Spectrum", "description": "A spectrum.", "context": "HTML", "accepts_children": false, "props": []}]}'
+)
+
+
+def test_a_published_catalog_is_handed_out_as_published(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    import pytest
+    from arkitekt_spec.blok.catalogs import forget_catalogs
+    from arkitekt_spec.blok.catalogs.fetch import CatalogUnavailable, cache_file
+
+    import arkitekt_lsp.live as live
+
+    monkeypatch.setenv("ARKITEKT_CATALOG_CACHE", str(tmp_path))
+    monkeypatch.setattr(live, "_unavailable", set())
+    forget_catalogs()
+    try:
+        # Not an address: never pulled, whatever asks.
+        for name in ("electron", "http://acme.example/catalogs/lab/v1", "file:///etc/passwd", None):
+            with pytest.raises(CatalogUnavailable):
+                live.published_catalogs(name)  # type: ignore[arg-type]
+
+        file = cache_file(LAB)
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(LAB_CATALOG)
+        monkeypatch.setattr("arkitekt_spec.blok.catalogs.fetch.fetch_catalog", lambda *_, **__: (_ for _ in ()).throw(CatalogUnavailable("offline")))
+
+        assert live.published_catalogs(LAB) == [LAB_CATALOG], "the kept copy, and not the base it extends: a client has that"
+        assert _scoped('app.blok("p", "<Html><Spectrum /><Spectrm /></Html>")\n', LAB) == ["catalog.unknown_component"]
+    finally:
+        forget_catalogs()
+
+
+def test_only_addresses_are_taken_as_catalogs_to_pull() -> None:
+    from arkitekt_lsp.server import Settings
+
+    settings = Settings()
+    settings.update({"catalogs": [LAB, "electron", "http://plain.example/c/v1", LAB, 3]})
+
+    assert settings.catalogs == (LAB,)

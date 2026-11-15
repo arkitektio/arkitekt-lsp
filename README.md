@@ -17,7 +17,8 @@ The editor starts `arkitekt-lsp` (stdio) from that environment. Then:
   `deps.*`, `args.*` and locals. A blok no check has seen yet is judged by the language alone, and
   a query's value always waits for the next save.
 
-All of this is local: the server talks to nothing.
+All of this is local: the server talks to nothing, except to pull a published catalog a blok names
+(see below).
 
 ## Who would satisfy your dependencies (`--connect`)
 
@@ -60,7 +61,26 @@ apps of the workspace, by reading its files without importing any, for a client 
 
 Settings (initialization options, or `workspace/didChangeConfiguration` under `arkitekt`):
 `check.onSave` (default true), `check.timeout` (seconds, default 120), `check.warnOnFStrings`
-(default true), `target`.
+(default true), `target`, `catalogs`.
+
+## The catalog a blok is written for
+
+A blok names one catalog (`app.blok(..., catalog=...)`), the base catalog when it names none. The
+base catalog and the Orkestrator's ship with arkitekt-spec. Any other is published at an address,
+and is pulled from there:
+
+- `catalogs` (a list of addresses) is what every check pulls first (`arkitekt check --catalog`), so
+  the bloks written for one are held to it. Changing the list checks the open files again;
+- a blok edited since its check is read against the catalog it names, pulled once per session;
+- the request `arkitekt/catalog` (`{id, refresh?}` → `{id, catalogs: [json, ...], error}`) hands a
+  client the catalog and those it extends, as published, the one nearest the base first, without
+  those that ship: what an editor registers to complete against it.
+
+Only an address is ever pulled: `https://` only (a redirect elsewhere is refused), capped in size
+and time, and read as data (JSON, checked to be the catalog that was asked for). Nothing of it is
+run. What was pulled is kept (`$ARKITEKT_CATALOG_CACHE`, else `~/.cache/arkitekt/catalogs`) and
+used when the address cannot be reached. A catalog that cannot be had leaves what it adds
+unchecked; the base catalog still is checked.
 
 A blok written as an f-string with a field gets a warning at its opening quote (`blok.generated`):
 Python fills it in once, when the app starts, so it can't follow the app as it runs the way

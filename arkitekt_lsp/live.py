@@ -20,8 +20,15 @@ from dataclasses import dataclass
 from typing import Any
 
 from arkitekt_spec.blok.bsx import parse_bsx_with_spans
-from arkitekt_spec.blok.catalogs import BlokView, blok_view, default_view, is_catalog_target, known_catalog
-from arkitekt_spec.blok.catalogs.fetch import CatalogUnavailable, resolve_catalog
+from arkitekt_spec.blok.catalogs import (
+    BlokView,
+    blok_view,
+    catalog_chain,
+    default_view,
+    is_catalog_target,
+    known_catalog,
+)
+from arkitekt_spec.blok.catalogs.fetch import CatalogUnavailable, cache_file, resolve_catalog
 from arkitekt_spec.blok.vocabulary import BlokError, load_vocabulary
 from arkitekt_spec.declare.blok.validate import BlokScope, check_blok_tree, place
 
@@ -75,7 +82,7 @@ def view_for(catalog: str | None) -> BlokView:
         return default_view()
     if known_catalog(catalog) is None and catalog not in _unavailable:
         # Only an address is pulled: a plain name is a catalog the app declared, which a check knows.
-        if is_catalog_target(catalog) and load_vocabulary().catalog_id.fullmatch(catalog):
+        if is_address(catalog):
             try:
                 resolve_catalog(catalog, timeout=PULL_TIMEOUT)
             except CatalogUnavailable:
@@ -83,6 +90,49 @@ def view_for(catalog: str | None) -> BlokView:
         else:
             _unavailable.add(catalog)
     return blok_view(catalog) if known_catalog(catalog) is not None else blok_view(complete=False)
+
+
+def is_address(catalog: object) -> bool:
+    """Whether ``catalog`` is the address a catalog is published at: the only kind that is pulled."""
+    return isinstance(catalog, str) and is_catalog_target(catalog) and load_vocabulary().catalog_id.fullmatch(catalog) is not None
+
+
+def forget_unavailable() -> None:
+    """Ask again for the catalogs that could not be had: the client changed what it names."""
+    _unavailable.clear()
+
+
+def published_catalogs(identifier: str, *, refresh: bool = False) -> list[str]:
+    """The catalog published at ``identifier`` and those it extends, as the JSON they were
+    published as, the one nearest the base first: what a client registers to complete against it.
+
+    Those that ship (the base, the Orkestrator's) are left out: a client has them. Pulled as
+    :func:`view_for` pulls (https only, capped, read as data), and kept.
+
+    Raises:
+        CatalogUnavailable: If ``identifier`` is no address, or it cannot be had.
+    """
+    if not is_address(identifier):
+        raise CatalogUnavailable(f"{identifier!r} is not the address a catalog is published at (https://...)")
+    if known_catalog(identifier) is None:
+        try:
+            resolve_catalog(identifier, refresh=refresh, timeout=PULL_TIMEOUT)
+        except CatalogUnavailable:
+            _unavailable.add(identifier)
+            raise
+        _unavailable.discard(identifier)
+    shipped = set(load_vocabulary().bundled_catalogs)
+    texts: list[str] = []
+    for catalog in catalog_chain(identifier):
+        if catalog.id in shipped:
+            continue
+        if catalog.id is None:
+            continue
+        try:
+            texts.append(cache_file(catalog.id).read_text(encoding="utf-8"))
+        except OSError as error:
+            raise CatalogUnavailable(f"the catalog {catalog.id!r} is known but its published copy is not kept") from error
+    return texts
 
 
 def live_findings(literal: BlokLiteral, scope: Mapping[str, Any] | None = None) -> list[LiveFinding]:
@@ -132,4 +182,13 @@ def live_findings(literal: BlokLiteral, scope: Mapping[str, Any] | None = None) 
     return placed
 
 
-__all__ = ["SCOPE_FREE", "UNSCOPED", "LiveFinding", "live_findings", "view_for"]
+__all__ = [
+    "SCOPE_FREE",
+    "UNSCOPED",
+    "LiveFinding",
+    "forget_unavailable",
+    "is_address",
+    "live_findings",
+    "published_catalogs",
+    "view_for",
+]
