@@ -96,7 +96,7 @@ def find_literal(
 
 
 def _blok_context(blok: str | None) -> str | None:
-    """The context an action blok's id names (``crop:overlay`` → ``OVERLAY``)."""
+    """The context an action blok's id names (``crop:scene`` → ``SCENE``)."""
     if blok is None or ":" not in blok:
         return None
     return blok.rsplit(":", 1)[1].upper()

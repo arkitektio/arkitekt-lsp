@@ -15,7 +15,7 @@ app.blok(
 # app.blok("commented", "<Html />")
 NOT_A_BLOK = "<b>bold</b>"
 
-@app.workflow(bloks="<Overlay><Glow on={task.running} /></Overlay>")
+@app.workflow(bloks="<Space room=\"lab\"><Placed dep=\"robot\" /></Space>")
 def run() -> None:
     """<Html> in a docstring is a docstring."""
 '''
@@ -26,7 +26,7 @@ def test_each_blok_literal_is_found_with_its_context_and_kind() -> None:
 
     assert [(literal.root, literal.context, literal.kind) for literal in found] == [
         ("Html", "HTML", "agent"),
-        ("Overlay", "OVERLAY", "action"),
+        ("Space", "SCENE", "action"),
     ]
     assert found[0].line == 6 and found[0].exact
     assert APP[found[0].start : found[0].end] == found[0].value

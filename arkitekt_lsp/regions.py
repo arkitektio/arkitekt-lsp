@@ -1,6 +1,6 @@
 """The bloks of a Python source: its string literals whose text is BSX.
 
-A blok starts with a root that names its context (``<Html>``, ``<Scene>``, ``<Overlay>``,
+A blok starts with a root that names its context (``<Html>``, ``<Scene>``, ``<Space>``,
 ``<AgentLogo>``, ``<ActionLogo>``: the vocabulary's ``blok_roots``), so a literal is one when its
 text, past whitespace and comments, opens with one. Literals are found with :mod:`tokenize`, so a
 quote inside a comment or another string is never mistaken for one, and a source that does not
@@ -204,7 +204,7 @@ def blok_literals(source: str) -> list[BlokLiteral]:
         context = blok_roots()[root]
         if context == "ACTION_LOGO":
             kind = "action_logo"
-        elif context == "OVERLAY" or _ACTION_BLOK.search(source[max(0, literal_start - 200) : literal_start]):
+        elif root == "Space" or _ACTION_BLOK.search(source[max(0, literal_start - 200) : literal_start]):
             kind = "action"
         else:
             kind = "agent"
