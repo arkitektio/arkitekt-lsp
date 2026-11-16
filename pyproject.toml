@@ -10,8 +10,8 @@ license = "MIT"
 # environment's arkitekt (`check --json-out`, with scopes and protocols since 11.2, the classes behind identifiers since 11.4), and placing what it found
 # parses the BSX with the spec (CatalogWarning.finding and BlokError.node, new in 6.0).
 dependencies = [
-    "arkitekt>=17.0",
-    "arkitekt-spec>=11.0",
+    "arkitekt>=18",
+    "arkitekt-spec>=12",
     "pygls>=2.1",
     # Only for --connect (rekuest_read.py), and all of them arkitekt's already.
     "fakts>=6.1",
