@@ -9,11 +9,13 @@ app = App("checked", "1.0")
 app.blok(
     "panel",
     """
-    <Html><Card><Slidr /></Card></Html>
+    <Blok kind="agent" context="panel"><Card><Slidr /></Card></Blok>
     """,
 )
 '''
-BLOK = "\n    <Html><Card><Slidr /></Card></Html>\n    "
+BLOK = '\n    <Blok kind="agent" context="panel"><Card><Slidr /></Card></Blok>\n    '
+SLIDR = BLOK.splitlines()[1].index("<Slidr") + 1
+"""The column of `<Slidr` on line 2 of the BSX (the text starts with a newline)."""
 
 
 def _place(diagnostic: dict[str, object], source: str = SOURCE, bloks: dict[str, str] | None = None) -> str | None:
@@ -22,20 +24,19 @@ def _place(diagnostic: dict[str, object], source: str = SOURCE, bloks: dict[str,
 
 
 def test_a_finding_about_a_node_is_placed_at_its_tag() -> None:
-    finding = {"call_line": 4, "blok": "panel", "code": "catalog.unknown_component", "node": "Html[0]/Card[0]/Slidr[0]"}
+    finding = {"call_line": 4, "blok": "panel", "code": "catalog.unknown_component", "node": "Blok[0]/Card[0]/Slidr[0]"}
 
     assert _place(finding) == "<Slidr"
 
 
 def test_a_finding_with_a_line_and_column_is_placed_there() -> None:
-    # line 2 of the BSX (the text starts with a newline), column 17: `<Slidr`
-    assert _place({"call_line": 4, "blok": "panel", "code": "bsx.syntax", "line": 2, "column": 17}) == "<Slidr"
+    assert _place({"call_line": 4, "blok": "panel", "code": "bsx.syntax", "line": 2, "column": SLIDR}) == "<Slidr"
 
 
 def test_a_finding_follows_its_blok_when_the_code_above_moves() -> None:
     moved = SOURCE.replace("app = App(", "# a comment\n\n\napp = App(")
 
-    assert _place({"call_line": 4, "blok": "panel", "code": "bsx.syntax", "line": 2, "column": 17}, moved) == "<Slidr"
+    assert _place({"call_line": 4, "blok": "panel", "code": "bsx.syntax", "line": 2, "column": SLIDR}, moved) == "<Slidr"
 
 
 def test_a_finding_about_a_blok_edited_since_is_dropped() -> None:
@@ -50,13 +51,13 @@ def test_a_blok_that_was_never_a_literal_is_told_at_its_declaring_line() -> None
         '""",\n)', '"""),\n)'
     )
     finding = {"call_line": 4, "blok": "panel", "code": "catalog.unknown_component"}
-    span = place(finding, dedented, blok_literals(dedented), {"panel": "<Html><Card><Slidr /></Card></Html>\n"})
+    span = place(finding, dedented, blok_literals(dedented), {"panel": BLOK.strip() + "\n"})
 
     assert span is not None and dedented[span[0] : span[1]] == "app.blok("
 
 
 def test_a_refusal_about_no_listed_blok_goes_to_the_declaring_statement() -> None:
-    assert _place({"call_line": 4, "code": "catalog.unknown_component", "line": 2, "column": 17}, bloks={}) == "<Slidr"
+    assert _place({"call_line": 4, "code": "catalog.unknown_component", "line": 2, "column": SLIDR}, bloks={}) == "<Slidr"
 
 
 def test_a_finding_about_no_blok_goes_to_its_line() -> None:

@@ -1,7 +1,8 @@
 """Which blok a literal is, once a check has seen it, so its scope follows it while it is edited.
 
-A check's report (version 3) carries each blok's ``scope``: its dependencies, locals, queries
-and args, what ``deps.<key>`` and ``args.<key>`` resolve against. What is being typed no longer
+A check's report carries each blok's ``scope``: where it is mounted (the kinds the mount takes,
+its dependencies, args and assets), what ``deps.<key>`` and ``args.<key>`` resolve against. What
+the blok owns (locals, queries, subscriptions) is in its own text. What is being typed no longer
 equals the source the check saw, so a literal is matched to its blok by where it is: when the
 report comes, each literal of a file it names is anchored to the blok the check found there.
 While the file has as many blok literals as it had then, the n-th literal is the n-th anchor's
@@ -16,7 +17,7 @@ import os
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from arkitekt_spec.actions import AgentDependencyInput, BlokLocalInput, BlokQueryInput, BlokSubscriptionInput
+from arkitekt_spec.actions import AgentDependencyInput
 from arkitekt_spec.declare.blok.validate import BlokScope
 
 from arkitekt_lsp.placement import find_literal
@@ -64,16 +65,14 @@ def blok_of(literals: Sequence[BlokLiteral], index: int, anchors: Anchors | None
 
 
 def to_blok_scope(scope: Mapping[str, Any]) -> BlokScope:
-    """A report's ``scope`` (snake_case, as ``BlokCheckScope``) as the validator takes it."""
+    """A report's ``scope`` (snake_case, the mount ``arkitekt check`` says) as the validator takes it."""
     args = scope.get("args")
     assets = scope.get("assets")
+    kinds = scope.get("kinds")
     return BlokScope(
-        kind=str(scope.get("kind", "agent")),
-        context=str(scope.get("context", "HTML")),
+        kinds=tuple(str(kind) for kind in kinds) if isinstance(kinds, list) else (),
+        mount="where the app declares it",
         dependencies=tuple(AgentDependencyInput.model_validate(d) for d in scope.get("dependencies") or ()),
-        locals=tuple(BlokLocalInput.model_validate(local) for local in scope.get("locals") or ()),
-        queries=tuple(BlokQueryInput.model_validate(query) for query in scope.get("queries") or ()),
-        subscriptions=tuple(BlokSubscriptionInput.model_validate(s) for s in scope.get("subscriptions") or ()),
         args=tuple(args) if isinstance(args, list) else None,
         assets=frozenset(assets) if isinstance(assets, list) else None,
     )

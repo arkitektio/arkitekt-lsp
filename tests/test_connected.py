@@ -84,7 +84,7 @@ def test_a_protocol_is_found_where_it_is_now() -> None:
 
 
 def test_a_dependency_is_read_off_the_cursor() -> None:
-    text = "<Html><Text>{deps.lab.state}</Text></Html>"
+    text = '<Blok kind="action" context="panel"><Text>{deps.lab.state}</Text></Blok>'
 
     assert dependency_key_at(text, text.index("lab")) == "lab"
     assert dependency_key_at(text, 2) is None

@@ -29,11 +29,12 @@ from arkitekt_lsp.server import (
     rekuest_offers,
 )
 
+BLOK = '<Blok kind="action" context="panel"><Text text={deps.lab.state} /></Blok>'
 SOURCE = (
     "class Lab(Protocol):\n"
     "    def ping(self, n: int) -> int: ...\n"
     "\n"
-    "app.blok('panel', '<Html><Text text={deps.lab.state} /></Html>')\n"
+    f"app.blok('panel', '{BLOK}')\n"
 )
 DEPENDENCY = {"key": "lab", "action_dependencies": [{"key": "ping", "demand": {"key": "ping"}}]}
 
@@ -72,10 +73,10 @@ def served(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[ArkitektLan
         "bloks": [
             {
                 "blok": "panel",
-                "source": "<Html><Text text={deps.lab.state} /></Html>",
+                "source": BLOK,
                 "file": str(file),
                 "call_line": 4,
-                "scope": {"kind": "agent", "context": "HTML", "dependencies": [DEPENDENCY], "args": []},
+                "scope": {"kinds": ["action", "assign"], "dependencies": [DEPENDENCY], "args": []},
             }
         ],
         "protocols": [{"name": "Lab", "file": str(file), "line": 1, "dependency": DEPENDENCY}],
@@ -323,7 +324,7 @@ def test_a_pick_of_what_an_agent_offers_becomes_an_edit_of_the_file(
 def test_the_f_string_warning_follows_its_setting(served: Any, tmp_path: Path) -> None:
     ls, _, published = served
     file = tmp_path / "panel.py"
-    text = 'app.blok("panel", f"<Html>{parts}</Html>")\n'
+    text = 'app.blok("panel", f"<Blok>{parts}</Blok>")\n'
     file.write_text(text)
     uri = file.as_uri()
     ls.workspace.put_text_document(types.TextDocumentItem(uri=uri, language_id="python", version=1, text=text))

@@ -1,8 +1,9 @@
 """The bloks of a Python source: its string literals whose text is BSX.
 
-A blok starts with a root that names its context (``<Html>``, ``<Scene>``, ``<Space>``,
-``<AgentLogo>``, ``<ActionLogo>``: the vocabulary's ``blok_roots``), so a literal is one when its
-text, past whitespace and comments, opens with one. Literals are found with :mod:`tokenize`, so a
+Every blok is one ``<Blok kind="..." context="...">`` (the vocabulary's ``blok``), so a literal
+is one when its text, past whitespace and comments, opens with ``<Blok``. What kind of blok it is
+and what draws it are read off that element, never guessed from where the literal sits: a blok
+kept in a module constant is the same blok as one written inline. Literals are found with :mod:`tokenize`, so a
 quote inside a comment or another string is never mistaken for one, and a source that does not
 tokenize to the end (it is being typed) still yields the literals before the break. A string that
 is a statement of its own (a docstring) is never a blok: it declares nothing, and editors colour it
@@ -23,7 +24,7 @@ from arkitekt_spec.blok.vocabulary import load_vocabulary
 
 _PREFIX = re.compile(r"[rRbBuUfFtT]*")
 _LEADING = re.compile(r"(?:\s+|<!--.*?-->)*", re.DOTALL)
-_ACTION_BLOK = re.compile(r"(?:\bbloks\s*=\s*[\[(]?|\bActionBlok\s*\()\s*$")
+_ATTRIBUTE = re.compile(r"""\s([A-Za-z_][\w]*)\s*=\s*(?:"([^"]*)"|'([^']*)')""")
 _SIMPLE_ESCAPES = {
     "\\": "\\",
     "'": "'",
@@ -39,9 +40,9 @@ _SIMPLE_ESCAPES = {
 
 
 @cache
-def blok_roots() -> dict[str, str]:
-    """Each root component and the context it names: ``{"Html": "HTML", ...}``."""
-    return dict(load_vocabulary().blok_roots)
+def blok_component() -> str:
+    """The one element every blok is: ``Blok``."""
+    return load_vocabulary().blok.component
 
 
 @dataclass(frozen=True)
@@ -62,9 +63,11 @@ class BlokLiteral:
     value: str
     """The string, escapes resolved: the BSX the app declares."""
     root: str
-    context: str
-    kind: str
-    """``agent``, ``action`` (an action's own blok) or ``action_logo``."""
+    """``Blok``."""
+    context: str | None
+    """What its ``<Blok context>`` says (``PANEL``, ``SCENE``, ``LOGO``), None while it says none."""
+    kind: str | None
+    """What its ``<Blok kind>`` says (``agent``, ``action``, ...), None while it says none."""
     offsets: tuple[int, ...] | None = None
 
     @property
@@ -160,12 +163,21 @@ _FSTRING_END = getattr(tokenize, "FSTRING_END", None)
 
 
 def _root_of(value: str) -> str | None:
-    """The blok root ``value`` opens with, past whitespace and comments."""
+    """``Blok`` when ``value`` opens with it, past whitespace and comments."""
     lead = _LEADING.match(value)
     opening = re.match(r"<([A-Za-z_][\w]*)\b", value[lead.end() if lead else 0 :])
-    if opening is None or opening.group(1) not in blok_roots():
+    if opening is None or opening.group(1) != blok_component():
         return None
     return opening.group(1)
+
+
+def _header_of(value: str) -> dict[str, str]:
+    """The literal attributes of the ``<Blok>`` tag ``value`` opens with (``kind``, ``context``, ...)."""
+    lead = _LEADING.match(value)
+    start = lead.end() if lead else 0
+    end = value.find(">", start)
+    tag = value[start : end if end >= 0 else len(value)]
+    return {match.group(1): match.group(2) if match.group(2) is not None else match.group(3) for match in _ATTRIBUTE.finditer(tag)}
 
 
 def blok_literals(source: str) -> list[BlokLiteral]:
@@ -201,13 +213,9 @@ def blok_literals(source: str) -> list[BlokLiteral]:
         root = _root_of(value)
         if root is None:
             continue
-        context = blok_roots()[root]
-        if context == "ACTION_LOGO":
-            kind = "action_logo"
-        elif root == "Space" or _ACTION_BLOK.search(source[max(0, literal_start - 200) : literal_start]):
-            kind = "action"
-        else:
-            kind = "agent"
+        header = _header_of(value)
+        context = load_vocabulary().blok.contexts.get(header.get("context", ""))
+        kind = header.get("kind") if header.get("kind") in load_vocabulary().kinds else None
         found.append(
             BlokLiteral(
                 start=start,
@@ -233,7 +241,7 @@ class _OpenFString:
 
 
 def generated_bloks(source: str) -> list[tuple[int, int]]:
-    """The opening (``f\"\"\"``) of each f-string with a field whose text opens with a blok root."""
+    """The opening (``f\"\"\"``) of each f-string with a field whose text opens with ``<Blok``."""
     starts = _line_starts(source)
     found: list[tuple[int, int]] = []
     open_strings: list[_OpenFString] = []
@@ -266,4 +274,4 @@ def generated_bloks(source: str) -> list[tuple[int, int]]:
     return sorted(found)
 
 
-__all__ = ["BlokLiteral", "blok_literals", "blok_roots", "generated_bloks"]
+__all__ = ["BlokLiteral", "blok_component", "blok_literals", "generated_bloks"]

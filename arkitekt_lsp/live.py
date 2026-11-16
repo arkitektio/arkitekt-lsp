@@ -2,12 +2,13 @@
 
 ``arkitekt check`` imports the app, so it runs on save. Between saves an edited blok is checked
 here, in process, with the validator ``arkitekt check`` runs (:func:`check_blok_tree`): the
-language and the catalog the blok is written for, and what the last check said the blok
-declares (its scope, see :mod:`.scopes`). A blok no check has seen has an empty scope, so
-beyond what the parser refuses only the findings that do not depend on what the blok declares
-are told; a reference to a dependency, a local or a query waits for the check.
+language and the catalog the blok is written for. A blok says what it is (``<Blok kind
+context>``) and declares what it owns (``<local>``, ``<query>``, ``<subscription>``), so all of
+that is checked from its text alone, mounted nowhere: only what its mount provides
+(``deps.<key>``, ``args.<key>``, ``self``'s actions and states, a local's ``like``) waits for a
+check, which says where it is mounted (its scope, see :mod:`.scopes`).
 
-A blok names the catalog it is written for (the scope's ``catalog``): the base catalog when it
+A blok names the catalog it is written for (its ``<Blok catalog=...>``): the base catalog when it
 names none, which ships with arkitekt-spec, as does a snapshot of the Orkestrator's. Any other
 is pulled from the address it is published at, once per session
 (:func:`arkitekt_spec.blok.catalogs.fetch.resolve_catalog`: https only, capped in size and
@@ -19,7 +20,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from arkitekt_spec.blok.bsx import parse_bsx_with_spans
+from arkitekt_spec.blok.bsx import parse_bsx_with_spans, source_catalog
 from arkitekt_spec.blok.catalogs import (
     BlokView,
     blok_view,
@@ -36,10 +37,6 @@ from arkitekt_lsp.placement import Span, place_in_literal
 from arkitekt_lsp.regions import BlokLiteral
 from arkitekt_lsp.scopes import to_blok_scope
 
-SCOPE_FREE = frozenset(
-    {"bsx", "expr", "callback", "palette", "props", "foreach", "context", "logo", "catalog", "toast"}
-)
-"""The diagnostic families (a code's first segment) an empty scope cannot get wrong."""
 UNSCOPED = frozenset({"query"})
 """The families a check's scope still cannot judge: a query's value is typed by its service's
 schema, which the report does not carry."""
@@ -54,10 +51,6 @@ class LiveFinding:
     code: str
     message: str
     hint: str | None = None
-
-
-def _scope_free(code: str) -> bool:
-    return code.split(".", 1)[0] in SCOPE_FREE
 
 
 def _judged_by_scope(code: str) -> bool:
@@ -138,10 +131,13 @@ def published_catalogs(identifier: str, *, refresh: bool = False) -> list[str]:
 def live_findings(literal: BlokLiteral, scope: Mapping[str, Any] | None = None) -> list[LiveFinding]:
     """What the language and the blok's catalog find in ``literal``, without the app.
 
-    With ``scope`` (what the last check said this blok declares) a reference is judged too,
-    and the blok is read against the catalog it names.
+    Without ``scope`` it is checked mounted nowhere; with one (where the last check said it is
+    mounted) what its mount provides is judged too. It is read against the catalog it names.
     """
-    named = scope.get("catalog") if scope is not None else None
+    try:
+        named: object = source_catalog(literal.value)
+    except BlokError:
+        named = scope.get("catalog") if scope is not None else None
     view = view_for(named if isinstance(named, str) else None)
     try:
         tree, spans = parse_bsx_with_spans(literal.value, view=view)
@@ -157,13 +153,9 @@ def live_findings(literal: BlokLiteral, scope: Mapping[str, Any] | None = None) 
                 hint=error.hint,
             )
         ]
-    # Every finding, errors too: one the empty scope gets wrong must not hide the rest.
-    if scope is not None:
-        checked = to_blok_scope(scope)
-        told = _judged_by_scope
-    else:
-        checked = BlokScope(kind=literal.kind, context=literal.context)
-        told = _scope_free
+    # Every finding, errors too. Mounted nowhere, the checker leaves what a mount provides alone.
+    checked = to_blok_scope(scope) if scope is not None else BlokScope()
+    told = _judged_by_scope
     findings = [place(finding, spans) for finding in check_blok_tree(tree, checked, view)]
     placed: list[LiveFinding] = []
     for finding in findings:
@@ -183,7 +175,6 @@ def live_findings(literal: BlokLiteral, scope: Mapping[str, Any] | None = None) 
 
 
 __all__ = [
-    "SCOPE_FREE",
     "UNSCOPED",
     "LiveFinding",
     "forget_unavailable",
