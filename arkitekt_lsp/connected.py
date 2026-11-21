@@ -218,8 +218,9 @@ def class_span(source: str, name: str) -> tuple[int, int] | None:
 
 
 def dependency_key_at(text: str, index: int) -> str | None:
-    """The ``<key>`` of the ``deps.<key>`` at ``index`` of a blok's BSX, if the cursor is on one."""
-    for match in re.finditer(r"\bdeps\.([A-Za-z_]\w*)", text):
+    """The ``<key>`` of the ``deps.<key>`` (a custom blok's ``agents.<key>``) at ``index`` of a
+    blok's BSX, if the cursor is on one."""
+    for match in re.finditer(r"\b(?:deps|agents)\.([A-Za-z_]\w*)", text):
         if match.start() <= index <= match.end():
             return match.group(1)
     return None
