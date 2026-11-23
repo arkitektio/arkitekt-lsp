@@ -15,6 +15,8 @@ from arkitekt_lsp.connected import (
     AgentInfo,
     Availability,
     Connection,
+    Login,
+    Status,
     action_lens_title,
     assign_input,
 )
@@ -55,10 +57,11 @@ class FakeConnection:
         return self.answer
 
 
+Served = tuple[ArkitektLanguageServer, str, list[Any]]
+
+
 @pytest.fixture
-def served(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> tuple[ArkitektLanguageServer, str, list[Any]]:
+def served(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Served:
     file = tmp_path / "app.py"
     file.write_text(SOURCE)
     uri = file.as_uri()
@@ -118,7 +121,7 @@ def _lens_params(uri: str) -> types.CodeLensParams:
     return types.CodeLensParams(text_document=types.TextDocumentIdentifier(uri=uri))
 
 
-def test_without_a_connection_there_is_no_lens_and_no_hover(served: Any) -> None:
+def test_without_a_connection_there_is_no_lens_and_no_hover(served: Served) -> None:
     ls, uri, _ = served
 
     assert code_lens(ls, _lens_params(uri)) == []
@@ -129,7 +132,7 @@ def test_without_a_connection_there_is_no_lens_and_no_hover(served: Any) -> None
     assert asyncio.run(hover(ls, params)) is None
 
 
-def test_asking_puts_a_count_above_the_protocol(served: Any) -> None:
+def test_asking_puts_a_count_above_the_protocol(served: Served) -> None:
     ls, uri, _ = served
     ls.connection = FakeConnection(TWO)
 
@@ -140,7 +143,7 @@ def test_asking_puts_a_count_above_the_protocol(served: Any) -> None:
     assert lens.range.start.line == 0
 
 
-def test_nobody_satisfying_it_is_a_warning_at_its_name(served: Any) -> None:
+def test_nobody_satisfying_it_is_a_warning_at_its_name(served: Served) -> None:
     ls, uri, published = served
     ls.connection = FakeConnection(NOBODY)
 
@@ -154,7 +157,7 @@ def test_nobody_satisfying_it_is_a_warning_at_its_name(served: Any) -> None:
     assert (told[-1].range.start.line, told[-1].range.start.character) == (0, 6)
 
 
-def test_a_check_that_fails_keeps_what_the_last_good_one_said(served: Any) -> None:
+def test_a_check_that_fails_keeps_what_the_last_good_one_said(served: Served) -> None:
     ls, uri, _ = served
     ls.connection = FakeConnection(TWO)
     state = _state(ls)
@@ -187,7 +190,7 @@ def test_the_editor_configures_the_server_otherwise() -> None:
     assert (settings.connect, settings.server_url) == (True, DEFAULT_URL)
 
 
-def test_hovering_the_protocol_lists_the_agents(served: Any) -> None:
+def test_hovering_the_protocol_lists_the_agents(served: Served) -> None:
     ls, uri, _ = served
     ls.connection = FakeConnection(TWO)
     asyncio.run(ls.ask_about(_state(ls)))
@@ -202,7 +205,7 @@ def test_hovering_the_protocol_lists_the_agents(served: Any) -> None:
 
 
 def test_hovering_a_dependency_in_a_blok_asks_about_what_its_scope_says(
-    served: Any,
+    served: Served,
 ) -> None:
     ls, uri, _ = served
     connection = FakeConnection(TWO)
@@ -228,8 +231,8 @@ class FakeLogin:
     def __init__(
         self,
         url: str,
-        status: Any,
-        login: Any,
+        status: Status,
+        login: Login,
         version: str = "0",
         actions: bool = False,
     ) -> None:
@@ -246,7 +249,7 @@ class FakeLogin:
 
 
 def test_logging_in_after_a_failure_tries_again_where_the_settings_alone_would_not(
-    served: Any, monkeypatch: pytest.MonkeyPatch
+    served: Served, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ls, _, _ = served
     FakeLogin.made = []
@@ -263,7 +266,7 @@ def test_logging_in_after_a_failure_tries_again_where_the_settings_alone_would_n
 
 
 def test_logging_out_ends_the_run_before_it_forgets_the_login(
-    served: Any, monkeypatch: pytest.MonkeyPatch
+    served: Served, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ls, _, _ = served
     told: list[tuple[str, Any]] = []
@@ -287,7 +290,7 @@ def test_logging_out_ends_the_run_before_it_forgets_the_login(
 
 
 def test_a_client_that_shows_the_login_is_told_the_challenge(
-    served: Any, monkeypatch: pytest.MonkeyPatch
+    served: Served, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ls, _, _ = served
     told: list[tuple[str, Any]] = []
@@ -332,7 +335,7 @@ def test_a_pick_of_what_an_agent_offers_becomes_an_edit_of_the_file(
     monkeypatch.setattr(ls.protocol, "_workspace", workspace, raising=False)
     applied: list[Any] = []
 
-    async def apply(params: Any) -> Any:
+    async def apply(params: types.ApplyWorkspaceEditParams) -> SimpleNamespace:
         applied.append(params)
         return SimpleNamespace(applied=True, failure_reason=None)
 
@@ -380,7 +383,9 @@ def test_a_pick_of_what_an_agent_offers_becomes_an_edit_of_the_file(
     assert "from typing import Protocol" in texts
 
 
-def test_the_f_string_warning_follows_its_setting(served: Any, tmp_path: Path) -> None:
+def test_the_f_string_warning_follows_its_setting(
+    served: Served, tmp_path: Path
+) -> None:
     ls, _, published = served
     file = tmp_path / "panel.py"
     text = 'app.blok("panel", f"<Blok>{parts}</Blok>")\n'

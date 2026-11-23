@@ -542,7 +542,7 @@ class Connection:
         self.status("connected")
         answer = Availability(
             agents=tuple(AgentInfo.of(agent) for agent in agents),
-            slots={slot: len(found) for slot, found in zip(slots, counts)},
+            slots={slot: len(found) for slot, found in zip(slots, counts, strict=True)},
             optional_slots=frozenset(
                 slot for slot, _, optional, _ in _slots(dependency) if optional
             ),

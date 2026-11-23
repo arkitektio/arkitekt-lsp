@@ -370,7 +370,7 @@ class ArkitektLanguageServer(LanguageServer):
         unplaced = [
             d["message"]
             for d in diagnostics
-            if not d.get("file") or not Path(d["file"]).exists()
+            if not d.get("file") or not Path(d["file"]).exists()  # noqa: ASYNC240 -- a stat of a file the report names, on the local disk
         ]
         self.status(
             "ok" if report.get("ok") else "failed",
@@ -612,7 +612,7 @@ class ArkitektLanguageServer(LanguageServer):
                 logger.warning("Asking the server about an action failed: %s", answer)
         return {
             hash_: answer
-            for hash_, answer in zip(hashes, answers)
+            for hash_, answer in zip(hashes, answers, strict=True)
             if not isinstance(answer, BaseException)
         }
 
@@ -1040,7 +1040,7 @@ async def hover(
         return None
     document = ls.workspace.get_text_document(params.text_document.uri)
     offset = document.offset_at_position(params.position)
-    path = os.path.realpath(fs_path)
+    path = os.path.realpath(fs_path)  # noqa: ASYNC240 -- resolving the open document's local path
     for span, protocol, answer in ls.about_protocols(path, document.source):
         if span[0] <= offset <= span[1]:
             return types.Hover(
