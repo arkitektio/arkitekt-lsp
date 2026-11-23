@@ -45,7 +45,9 @@ AGENT_LIMIT = 100
 POLL_FROM = 0.3
 POLL_TO = 3.0
 """How often a task's events are read: at first, and once it has run for a while."""
-FINAL_EVENTS = frozenset({"COMPLETED", "FAILED", "CRITICAL", "CANCELLED", "DENIED", "INTERRUPTED", "LOST"})
+FINAL_EVENTS = frozenset(
+    {"COMPLETED", "FAILED", "CRITICAL", "CANCELLED", "DENIED", "INTERRUPTED", "LOST"}
+)
 """The event kinds after which a task reports nothing more."""
 
 
@@ -57,7 +59,9 @@ def read_only_problem(document: str) -> str | None:
         definitions = parse(document).definitions
     except GraphQLError:
         return "That is not a GraphQL document."
-    operations = [node for node in definitions if isinstance(node, OperationDefinitionNode)]
+    operations = [
+        node for node in definitions if isinstance(node, OperationDefinitionNode)
+    ]
     if any(operation.operation.value != "query" for operation in operations):
         return "Only queries can run here: a change goes through an action, never a mutation."
     if len(operations) != 1:
@@ -70,7 +74,9 @@ def read_only_problem(document: str) -> str | None:
 
 def _demand(demand: Any, model: Any) -> dict[str, Any]:  # noqa: ANN401
     """A report's demand (snake_case) as the server's input spells it."""
-    return model.model_validate(demand).model_dump(mode="json", by_alias=True, exclude_none=True)
+    return model.model_validate(demand).model_dump(
+        mode="json", by_alias=True, exclude_none=True
+    )
 
 
 def _identity(dependency: Mapping[str, Any]) -> dict[str, Any]:
@@ -83,18 +89,24 @@ def _identity(dependency: Mapping[str, Any]) -> dict[str, Any]:
     return filters
 
 
-def _slots(dependency: Mapping[str, Any]) -> list[tuple[str, str, bool, dict[str, Any]]]:
+def _slots(
+    dependency: Mapping[str, Any],
+) -> list[tuple[str, str, bool, dict[str, Any]]]:
     """Each slot with a demand: its key, what it is (``actionDemands``/``stateDemands``), whether it
     is optional, and its demand. A slot without a demand asks nothing (and the server refuses one)."""
     slots: list[tuple[str, str, bool, dict[str, Any]]] = []
     for slot in dependency.get("action_dependencies") or ():
         if slot.get("demand"):
             demand = _demand(slot["demand"], ActionDemandInput)
-            slots.append((slot["key"], "actionDemands", bool(slot.get("optional")), demand))
+            slots.append(
+                (slot["key"], "actionDemands", bool(slot.get("optional")), demand)
+            )
     for slot in dependency.get("state_dependencies") or ():
         if slot.get("demand"):
             demand = _demand(slot["demand"], StateDemandInput)
-            slots.append((slot["key"], "stateDemands", bool(slot.get("optional")), demand))
+            slots.append(
+                (slot["key"], "stateDemands", bool(slot.get("optional")), demand)
+            )
     return slots
 
 
@@ -109,7 +121,10 @@ def filters_for(dependency: Mapping[str, Any]) -> dict[str, Any]:
 
 def slot_filters(dependency: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     """Per slot, the ``AgentFilter`` of the agents that meet that slot alone: what says which is unmet."""
-    return {key: {**_identity(dependency), field: [demand]} for key, field, _, demand in _slots(dependency)}
+    return {
+        key: {**_identity(dependency), field: [demand]}
+        for key, field, _, demand in _slots(dependency)
+    }
 
 
 # -- what it answered
@@ -159,7 +174,11 @@ def lens_title(availability: Availability) -> str:
         title = "no agents"
     else:
         title = f"{_count(total)} agent{'' if total == 1 else 's'} · {_count(availability.connected)} connected"
-    unmet = [key for key, count in availability.slots.items() if count == 0 and key not in availability.optional_slots]
+    unmet = [
+        key
+        for key, count in availability.slots.items()
+        if count == 0 and key not in availability.optional_slots
+    ]
     if unmet:
         title += " · nobody offers " + ", ".join(unmet)
     return title
@@ -176,14 +195,20 @@ def action_lens_title(action: Mapping[str, Any] | None) -> str:
     return f"$(play) Run · {connected} agent{'' if connected == 1 else 's'}"
 
 
-def problem(dependency: Mapping[str, Any], availability: Availability) -> tuple[str, str] | None:
+def problem(
+    dependency: Mapping[str, Any], availability: Availability
+) -> tuple[str, str] | None:
     """The level and message when too few agents satisfy ``dependency``; never an error, because
     what is missing may simply not be running yet."""
     needed = dependency.get("min_viable_instances") or 1
     total = len(availability.agents)
     if total >= needed:
         return None
-    unmet = [key for key, count in availability.slots.items() if count == 0 and key not in availability.optional_slots]
+    unmet = [
+        key
+        for key, count in availability.slots.items()
+        if count == 0 and key not in availability.optional_slots
+    ]
     where = f" Nobody offers: {', '.join(unmet)}." if unmet else ""
     level = "info" if dependency.get("optional") else "warning"
     if total == 0:
@@ -198,7 +223,11 @@ def hover_markdown(name: str, availability: Availability) -> str:
     """What hovering a dependency tells: the agents, then each slot."""
     lines = [f"**{name}**: {lens_title(availability)}", ""]
     for agent in availability.agents[:10]:
-        at = f" ({agent.app}{f'@{agent.version}' if agent.version else ''})" if agent.app else ""
+        at = (
+            f" ({agent.app}{f'@{agent.version}' if agent.version else ''})"
+            if agent.app
+            else ""
+        )
         lines.append(f"- {'●' if agent.connected else '○'} `{agent.name}`{at}")
     if len(availability.agents) > 10:
         lines.append(f"- … {_count(len(availability.agents))} in all")
@@ -213,7 +242,11 @@ def hover_markdown(name: str, availability: Availability) -> str:
 
 def class_span(source: str, name: str) -> tuple[int, int] | None:
     """Where ``class <name>`` names it in ``source`` as it reads now (the report's line may have moved)."""
-    match = re.search(rf"^[ \t]*class[ \t]+({re.escape(name.rsplit('.', 1)[-1])})\b", source, re.MULTILINE)
+    match = re.search(
+        rf"^[ \t]*class[ \t]+({re.escape(name.rsplit('.', 1)[-1])})\b",
+        source,
+        re.MULTILINE,
+    )
     return match.span(1) if match else None
 
 
@@ -228,7 +261,10 @@ def dependency_key_at(text: str, index: int) -> str | None:
 
 def offer_of(agent: Mapping[str, Any]) -> dict[str, Any]:
     """An agent of the server's answer, flat: its actions, and its states with their ports."""
-    actions = {str(i["action"]["key"]): dict(i["action"]) for i in agent.get("implementations") or ()}
+    actions = {
+        str(i["action"]["key"]): dict(i["action"])
+        for i in agent.get("implementations") or ()
+    }
     states = {
         str(state.get("key") or state["interface"]): {
             "key": str(state.get("key") or state["interface"]),
@@ -267,7 +303,12 @@ def assign_input(
 ) -> dict[str, Any]:
     """What an assign takes. Without ``implementation`` the server picks the agent, as ``arkitekt call
     remote`` does. Dependencies belong to an implementation, so pins only travel with one."""
-    input_: dict[str, Any] = {"actionHash": action_hash, "args": dict(args), "capture": False, "reference": reference}
+    input_: dict[str, Any] = {
+        "actionHash": action_hash,
+        "args": dict(args),
+        "capture": False,
+        "reference": reference,
+    }
     if implementation:
         input_["implementation"] = implementation
         if dependencies:
@@ -296,7 +337,14 @@ class Connection:
         login: Shows the user a device code challenge.
     """
 
-    def __init__(self, url: str, status: Status, login: Login, version: str = "0.0.0", actions: bool = False) -> None:
+    def __init__(
+        self,
+        url: str,
+        status: Status,
+        login: Login,
+        version: str = "0.0.0",
+        actions: bool = False,
+    ) -> None:
         self.url = url
         self.actions = actions
         """Log in as the app that may also call actions and read mikro."""
@@ -333,7 +381,9 @@ class Connection:
                 device_code_hook=self._show_login,
                 mesh=False,
             )
-            self.pending = asyncio.ensure_future(asyncio.wait_for(runtime.__aenter__(), LOGIN_TIMEOUT))
+            self.pending = asyncio.ensure_future(
+                asyncio.wait_for(runtime.__aenter__(), LOGIN_TIMEOUT)
+            )
             await self.pending
         except asyncio.CancelledError:
             if self.pending is None:  # stop() gave up on it
@@ -342,7 +392,12 @@ class Connection:
         except Exception as error:  # noqa: BLE001 - whatever it was, the server stays local
             logger.warning("Could not connect to %s: %s", self.url, error)
             self.pending = None
-            self.status("offline", message=f"{type(error).__name__}: {error}" if str(error) else type(error).__name__)
+            self.status(
+                "offline",
+                message=f"{type(error).__name__}: {error}"
+                if str(error)
+                else type(error).__name__,
+            )
             return
         self.pending = None
         self.runtime = runtime
@@ -368,7 +423,9 @@ class Connection:
     def _client(self, service: str) -> Any:  # noqa: ANN401 - the clients load only when connecting
         """The client for ``service``; raises what the panel should say when there is none."""
         if self.runtime is None or not self.actions:
-            raise ActionsUnavailable("Actions are off: set arkitekt.server.actions and connect to the server.")
+            raise ActionsUnavailable(
+                "Actions are off: set arkitekt.server.actions and connect to the server."
+            )
         from arkitekt_lsp.rekuest_call import SERVICES
 
         kind = SERVICES.get(service)
@@ -376,16 +433,22 @@ class Connection:
             raise ActionsUnavailable(f"The editor cannot ask the {service} service.")
         return self.runtime.require(kind)
 
-    async def query(self, service: str, document: str, variables: Mapping[str, Any]) -> dict[str, Any]:
+    async def query(
+        self, service: str, document: str, variables: Mapping[str, Any]
+    ) -> dict[str, Any]:
         """A read a widget or a blok carries as text, on ``service``."""
         problem_ = read_only_problem(document)
         if problem_ is not None:
             raise ActionsUnavailable(problem_)
-        return await asyncio.wait_for(self._client(service).aquery(document, variables), QUERY_TIMEOUT)
+        return await asyncio.wait_for(
+            self._client(service).aquery(document, variables), QUERY_TIMEOUT
+        )
 
     async def action(self, action_hash: str) -> dict[str, Any] | None:
         """The action the server knows by ``action_hash``, with its ports; None when it knows none."""
-        return await asyncio.wait_for(self._client("rekuest").aaction(action_hash), QUERY_TIMEOUT)
+        return await asyncio.wait_for(
+            self._client("rekuest").aaction(action_hash), QUERY_TIMEOUT
+        )
 
     async def call(
         self,
@@ -396,18 +459,28 @@ class Connection:
         dependencies: Sequence[Mapping[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Start the action as a root task; see :func:`assign_input` for who runs it."""
-        input_ = assign_input(action_hash, args, reference, implementation, dependencies)
-        return await asyncio.wait_for(self._client("rekuest").aassign(input_), QUERY_TIMEOUT)
+        input_ = assign_input(
+            action_hash, args, reference, implementation, dependencies
+        )
+        return await asyncio.wait_for(
+            self._client("rekuest").aassign(input_), QUERY_TIMEOUT
+        )
 
     async def cancel(self, task: str) -> dict[str, Any]:
-        return await asyncio.wait_for(self._client("rekuest").acancel(task), QUERY_TIMEOUT)
+        return await asyncio.wait_for(
+            self._client("rekuest").acancel(task), QUERY_TIMEOUT
+        )
 
-    async def follow(self, task: str, told: Callable[[list[dict[str, Any]], bool], None]) -> None:
+    async def follow(
+        self, task: str, told: Callable[[list[dict[str, Any]], bool], None]
+    ) -> None:
         """Tell ``told(new events, done)`` until the task ends or this is cancelled."""
         seen: set[str] = set()
         wait = POLL_FROM
         while True:
-            events = await asyncio.wait_for(self._client("rekuest").aevents(task), QUERY_TIMEOUT)
+            events = await asyncio.wait_for(
+                self._client("rekuest").aevents(task), QUERY_TIMEOUT
+            )
             new = [event for event in events if event["id"] not in seen]
             seen.update(event["id"] for event in new)
             done = any(event["kind"] in FINAL_EVENTS for event in events)
@@ -427,7 +500,12 @@ class Connection:
             agents = await asyncio.wait_for(client.aoffers(AGENT_LIMIT), QUERY_TIMEOUT)
         except Exception as error:  # noqa: BLE001 - no answer is an answer: nothing to offer
             logger.warning("Asking %s what agents offer failed: %s", self.url, error)
-            self.status("offline", message=f"{type(error).__name__}: {error}" if str(error) else type(error).__name__)
+            self.status(
+                "offline",
+                message=f"{type(error).__name__}: {error}"
+                if str(error)
+                else type(error).__name__,
+            )
             return None
         return {str(agent["id"]): offer_of(agent) for agent in agents}
 
@@ -445,19 +523,29 @@ class Connection:
             agents, *counts = await asyncio.wait_for(
                 asyncio.gather(
                     client.aagents(filters_for(dependency), AGENT_LIMIT),
-                    *(client.aagents(filters, AGENT_LIMIT) for filters in slots.values()),
+                    *(
+                        client.aagents(filters, AGENT_LIMIT)
+                        for filters in slots.values()
+                    ),
                 ),
                 QUERY_TIMEOUT,
             )
         except Exception as error:  # noqa: BLE001 - no answer is an answer: nothing to say
             logger.warning("Asking %s about a dependency failed: %s", self.url, error)
-            self.status("offline", message=f"{type(error).__name__}: {error}" if str(error) else type(error).__name__)
+            self.status(
+                "offline",
+                message=f"{type(error).__name__}: {error}"
+                if str(error)
+                else type(error).__name__,
+            )
             return None
         self.status("connected")
         answer = Availability(
             agents=tuple(AgentInfo.of(agent) for agent in agents),
             slots={slot: len(found) for slot, found in zip(slots, counts)},
-            optional_slots=frozenset(slot for slot, _, optional, _ in _slots(dependency) if optional),
+            optional_slots=frozenset(
+                slot for slot, _, optional, _ in _slots(dependency) if optional
+            ),
         )
         self.answers[key] = (time.monotonic(), answer)
         return answer

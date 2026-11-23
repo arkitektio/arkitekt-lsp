@@ -27,8 +27,8 @@ dev = [
     "pytest>=8.3.5",
     "pytest-asyncio>=0.26",
     "python-semantic-release>=9.21.0",
-    "ruff>0.11",
-    "basedpyright>=1.21",
+    "ruff==0.17.6",
+    "basedpyright==1.40.2",
 ]
 
 [tool.hatch.build.targets.sdist]
@@ -36,19 +36,6 @@ include = ["arkitekt_lsp"]
 
 [tool.hatch.build.targets.wheel]
 include = ["arkitekt_lsp"]
-
-[tool.basedpyright]
-include = ["arkitekt_lsp"]
-exclude = ["**/__pycache__", "tests"]
-typeCheckingMode = "standard"
-
-[tool.ruff]
-target-version = "py311"
-line-length = 120
-
-[tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "UP", "I"]
-extend-ignore = ["UP037", "UP038", "UP042"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

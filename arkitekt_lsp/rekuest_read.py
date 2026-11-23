@@ -75,8 +75,12 @@ class RekuestRead(Composition):
 
     rath: Rath
 
-    async def aagents(self, filters: Mapping[str, Any], limit: int) -> list[dict[str, Any]]:
-        result = await self.rath.aquery(_AGENTS, {"filters": dict(filters), "pagination": {"limit": limit}})
+    async def aagents(
+        self, filters: Mapping[str, Any], limit: int
+    ) -> list[dict[str, Any]]:
+        result = await self.rath.aquery(
+            _AGENTS, {"filters": dict(filters), "pagination": {"limit": limit}}
+        )
         return list(result.data["agents"])
 
     async def aoffers(self, limit: int) -> list[dict[str, Any]]:
@@ -90,7 +94,13 @@ registry = AppRegistry()
 
 @registry.service()
 def rekuest_read(
-    rekuest: Annotated[Alias, Require("live.arkitekt.rekuest", "Where the agents that would satisfy a dependency are")],
+    rekuest: Annotated[
+        Alias,
+        Require(
+            "live.arkitekt.rekuest",
+            "Where the agents that would satisfy a dependency are",
+        ),
+    ],
     tokens: TokenLoader,
 ) -> RekuestRead:
     """Rekuest, read-only, over http."""
@@ -99,7 +109,9 @@ def rekuest_read(
             link=compose(
                 FaktsAuthLink(token_loader=tokens),
                 AIOHttpLink(
-                    endpoint_url=rekuest.to_http_path("graphql"), proxy=rekuest.proxy, ssl_context=rekuest.ssl_context()
+                    endpoint_url=rekuest.to_http_path("graphql"),
+                    proxy=rekuest.proxy,
+                    ssl_context=rekuest.ssl_context(),
                 ),
             )
         )

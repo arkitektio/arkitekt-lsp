@@ -32,7 +32,9 @@ def _blok_context(blok: Mapping[str, Any]) -> str | None:
     return context if isinstance(context, str) else None
 
 
-def anchor_bloks(source: str, literals: Sequence[BlokLiteral], path: str, report: Mapping[str, Any]) -> Anchors:
+def anchor_bloks(
+    source: str, literals: Sequence[BlokLiteral], path: str, report: Mapping[str, Any]
+) -> Anchors:
     """The blok each literal of ``source`` (the file at real ``path``) held when ``report`` came."""
     anchors: list[str | None] = [None] * len(literals)
     index_of = {id(literal): index for index, literal in enumerate(literals)}
@@ -44,10 +46,14 @@ def anchor_bloks(source: str, literals: Sequence[BlokLiteral], path: str, report
         if isinstance(file, str) and isinstance(call_line, int):
             if os.path.realpath(file) != path:
                 continue
-            literal = find_literal(source, literals, call_line, blok_source, _blok_context(blok))
+            literal = find_literal(
+                source, literals, call_line, blok_source, _blok_context(blok)
+            )
         else:
             # Declared nowhere it says: only its text tells which literal it is.
-            literal = next((literal for literal in literals if literal.value == blok_source), None)
+            literal = next(
+                (literal for literal in literals if literal.value == blok_source), None
+            )
         if literal is not None:
             index = index_of[id(literal)]
             if anchors[index] is None:
@@ -55,10 +61,19 @@ def anchor_bloks(source: str, literals: Sequence[BlokLiteral], path: str, report
     return tuple(anchors)
 
 
-def blok_of(literals: Sequence[BlokLiteral], index: int, anchors: Anchors | None, sources: Mapping[str, str]) -> str | None:
+def blok_of(
+    literals: Sequence[BlokLiteral],
+    index: int,
+    anchors: Anchors | None,
+    sources: Mapping[str, str],
+) -> str | None:
     """The blok the ``index``-th literal is: its anchor while the literals are as many as they were,
     else the blok whose checked source it still is."""
-    if anchors is not None and len(anchors) == len(literals) and anchors[index] is not None:
+    if (
+        anchors is not None
+        and len(anchors) == len(literals)
+        and anchors[index] is not None
+    ):
         return anchors[index]
     value = literals[index].value
     return next((key for key, source in sources.items() if source == value), None)
@@ -72,7 +87,10 @@ def to_blok_scope(scope: Mapping[str, Any]) -> BlokScope:
     return BlokScope(
         kinds=tuple(str(kind) for kind in kinds) if isinstance(kinds, list) else (),
         mount="where the app declares it",
-        dependencies=tuple(AgentDependencyInput.model_validate(d) for d in scope.get("dependencies") or ()),
+        dependencies=tuple(
+            AgentDependencyInput.model_validate(d)
+            for d in scope.get("dependencies") or ()
+        ),
         args=tuple(args) if isinstance(args, list) else None,
         assets=frozenset(assets) if isinstance(assets, list) else None,
     )

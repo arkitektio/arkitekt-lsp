@@ -22,7 +22,10 @@ DEPENDENCY = {
     "key": "Lab",
     "app": "lab",
     "action_dependencies": [
-        {"key": "ping", "demand": {"key": "ping", "arg_matches": [{"key": "n", "kind": "INT"}]}},
+        {
+            "key": "ping",
+            "demand": {"key": "ping", "arg_matches": [{"key": "n", "kind": "INT"}]},
+        },
         {"key": "extra", "optional": True, "demand": {"key": "extra"}},
         {"key": "free"},
     ],
@@ -31,14 +34,22 @@ DEPENDENCY = {
 
 
 def _agent(name: str, connected: bool = True) -> dict[str, object]:
-    return {"id": name, "name": name, "connected": connected, "app": {"identifier": "lab"}, "release": {"version": "1"}}
+    return {
+        "id": name,
+        "name": name,
+        "connected": connected,
+        "app": {"identifier": "lab"},
+        "release": {"version": "1"},
+    }
 
 
 def test_the_filter_asks_for_every_required_slot_as_the_server_spells_it() -> None:
     filters = filters_for(DEPENDENCY)
 
     assert filters["appIdentifier"] == "lab" and filters["distinct"] is True
-    assert filters["actionDemands"] == [{"key": "ping", "argMatches": [{"key": "n", "kind": "INT"}]}]
+    assert filters["actionDemands"] == [
+        {"key": "ping", "argMatches": [{"key": "n", "kind": "INT"}]}
+    ]
     assert filters["stateDemands"] == [{"key": "status"}]
 
 
@@ -54,7 +65,9 @@ def test_each_slot_with_a_demand_can_be_asked_alone() -> None:
 
 
 def test_too_few_agents_is_a_warning_never_an_error() -> None:
-    nobody = Availability(agents=(), slots={"ping": 0, "extra": 0}, optional_slots=frozenset({"extra"}))
+    nobody = Availability(
+        agents=(), slots={"ping": 0, "extra": 0}, optional_slots=frozenset({"extra"})
+    )
 
     level, message = problem(DEPENDENCY, nobody) or ("", "")
     assert level == "warning" and "ping" in message and "extra" not in message
@@ -67,12 +80,18 @@ def test_too_few_agents_is_a_warning_never_an_error() -> None:
 
 def test_the_lens_counts_agents_and_names_the_slots_nobody_offers() -> None:
     answer = Availability(
-        agents=(AgentInfo.of(_agent("a")), AgentInfo.of(_agent("b", connected=False))), slots={"ping": 2}
+        agents=(AgentInfo.of(_agent("a")), AgentInfo.of(_agent("b", connected=False))),
+        slots={"ping": 2},
     )
 
     assert lens_title(answer) == "2 agents · 1 connected"
-    assert lens_title(Availability(agents=(), slots={"ping": 0})) == "no agents · nobody offers ping"
-    assert "`a`" in hover_markdown("Lab", answer) and "`ping`" in hover_markdown("Lab", answer)
+    assert (
+        lens_title(Availability(agents=(), slots={"ping": 0}))
+        == "no agents · nobody offers ping"
+    )
+    assert "`a`" in hover_markdown("Lab", answer) and "`ping`" in hover_markdown(
+        "Lab", answer
+    )
 
 
 def test_a_protocol_is_found_where_it_is_now() -> None:
@@ -94,18 +113,24 @@ class _Client:
     def __init__(self) -> None:
         self.asked: list[dict[str, object]] = []
 
-    async def aagents(self, filters: dict[str, object], limit: int) -> list[dict[str, object]]:
+    async def aagents(
+        self, filters: dict[str, object], limit: int
+    ) -> list[dict[str, object]]:
         self.asked.append(filters)
         return [_agent("a")]
 
 
-def _connection(client: object | None) -> tuple[Connection, list[tuple[str, str | None]]]:
+def _connection(
+    client: object | None,
+) -> tuple[Connection, list[tuple[str, str | None]]]:
     said: list[tuple[str, str | None]] = []
 
     async def login(challenge: object) -> None:
         raise AssertionError("no login here")
 
-    connection = Connection(DEFAULT_URL, lambda state, message=None: said.append((state, message)), login)
+    connection = Connection(
+        DEFAULT_URL, lambda state, message=None: said.append((state, message)), login
+    )
     connection.client = client  # type: ignore[assignment]
     return connection, said
 
@@ -116,7 +141,11 @@ def test_an_answer_holds_until_it_is_forgotten() -> None:
 
     async def ask() -> None:
         answer = await connection.availability(DEPENDENCY)
-        assert answer is not None and answer.slots == {"ping": 1, "extra": 1, "status": 1}
+        assert answer is not None and answer.slots == {
+            "ping": 1,
+            "extra": 1,
+            "status": 1,
+        }
         assert len(client.asked) == 4, "the dependency and each slot"
         await connection.availability(DEPENDENCY)
         assert len(client.asked) == 4
@@ -160,6 +189,8 @@ def test_a_local_server_loads_nothing_it_would_connect_with() -> None:
         "print([m for m in ('arkitekt', 'fakts', 'rath', 'koil', 'arkitekt_lsp.rekuest_read') if m in sys.modules])"
     )
 
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
 
     assert result.stdout.strip() == "[]"

@@ -26,7 +26,14 @@ AGENT = {
                 "description": "Drives the stage there.\nAnd more.",
                 "args": [
                     {"key": "x_um", "kind": "FLOAT", "nullable": False},
-                    {"key": "tags", "kind": "LIST", "nullable": True, "children": [{"key": "tag", "kind": "STRING", "nullable": False}]},
+                    {
+                        "key": "tags",
+                        "kind": "LIST",
+                        "nullable": True,
+                        "children": [
+                            {"key": "tag", "kind": "STRING", "nullable": False}
+                        ],
+                    },
                     {"key": "z_um", "kind": "FLOAT", "nullable": False, "default": 0.0},
                 ],
                 "returns": [{"key": "return0", "kind": "FLOAT", "nullable": False}],
@@ -38,12 +45,25 @@ AGENT = {
                 "name": "Snap",
                 "kind": "FUNCTION",
                 "args": [],
-                "returns": [{"key": "return0", "kind": "STRUCTURE", "nullable": False, "identifier": "@mikro/image"}],
+                "returns": [
+                    {
+                        "key": "return0",
+                        "kind": "STRUCTURE",
+                        "nullable": False,
+                        "identifier": "@mikro/image",
+                    }
+                ],
             }
         },
     ],
     "states": [
-        {"interface": "StagePosition", "key": None, "definition": {"ports": [{"key": "x_um", "kind": "FLOAT", "nullable": False}]}}
+        {
+            "interface": "StagePosition",
+            "key": None,
+            "definition": {
+                "ports": [{"key": "x_um", "kind": "FLOAT", "nullable": False}]
+            },
+        }
     ],
 }
 
@@ -52,7 +72,14 @@ def _applied(source: str, **kwargs: Any) -> str:
     written = write_dependency(source, **kwargs)
     lines = source.splitlines(keepends=True)
     lines.insert(written.line, written.source)
-    last_import = max(i for i, line in enumerate(source.splitlines()) if line.startswith(("from ", "import "))) + 1
+    last_import = (
+        max(
+            i
+            for i, line in enumerate(source.splitlines())
+            if line.startswith(("from ", "import "))
+        )
+        + 1
+    )
     lines.insert(last_import, "".join(f"{line}\n" for line in written.imports))
     result = "".join(lines)
     assert result.splitlines()[written.class_line].startswith("class Stage(")
@@ -62,7 +89,13 @@ def _applied(source: str, **kwargs: Any) -> str:
 def test_what_is_written_declares_the_demand_it_was_read_from(tmp_path: Path) -> None:
     offer = offer_of(AGENT)
     file = tmp_path / "written.py"
-    written = _applied(SOURCE, app=offer["app"], class_name="Stage", actions=offer["actions"], states=offer["states"])
+    written = _applied(
+        SOURCE,
+        app=offer["app"],
+        class_name="Stage",
+        actions=offer["actions"],
+        states=offer["states"],
+    )
     file.write_text(written, encoding="utf-8")
 
     namespace = runpy.run_path(str(file), run_name="written")
@@ -80,9 +113,14 @@ def test_what_is_written_declares_the_demand_it_was_read_from(tmp_path: Path) ->
 def test_a_port_only_the_app_can_name_is_a_comment_saying_so_never_a_guess() -> None:
     offer = offer_of(AGENT)
 
-    written = write_dependency(SOURCE, app=offer["app"], class_name="Stage", actions=offer["actions"])
+    written = write_dependency(
+        SOURCE, app=offer["app"], class_name="Stage", actions=offer["actions"]
+    )
 
-    assert "def move_to(self, x_um: float, tags: Optional[list[str]] = None, z_um: float = 0.0) -> float:" in written.source
+    assert (
+        "def move_to(self, x_um: float, tags: Optional[list[str]] = None, z_um: float = 0.0) -> float:"
+        in written.source
+    )
     assert "# snap() → @mikro/image: needs @mikro/image" in written.source
     assert "def snap" not in written.source
 
@@ -96,14 +134,31 @@ def test_a_structure_the_app_knows_is_written_as_its_class(tmp_path: Path) -> No
         "@app.registry.structure_registry.structure('@mikro/image', cls=Image)\n"
         "async def expand(id: str) -> Image:\n    return Image()\n"
     )
-    known = {"@mikro/image": {"identifier": "@mikro/image", "kind": "STRUCTURE", "name": "Image", "module": "shapes"}}
+    known = {
+        "@mikro/image": {
+            "identifier": "@mikro/image",
+            "kind": "STRUCTURE",
+            "name": "Image",
+            "module": "shapes",
+        }
+    }
     snap = [action for action in offer["actions"] if action["key"] == "snap"]
 
-    written = write_dependency(source, app=offer["app"], class_name="Stage", actions=snap, known=known)
+    written = write_dependency(
+        source, app=offer["app"], class_name="Stage", actions=snap, known=known
+    )
 
     assert "def snap(self) -> Image:" in written.source
-    assert not any("Image" in line for line in written.imports), "the file has it already"
-    assert write_dependency(source.replace("from shapes import Image\n", ""), app=None, class_name="S", actions=snap, known=known).imports == (
+    assert not any("Image" in line for line in written.imports), (
+        "the file has it already"
+    )
+    assert write_dependency(
+        source.replace("from shapes import Image\n", ""),
+        app=None,
+        class_name="S",
+        actions=snap,
+        known=known,
+    ).imports == (
         "from shapes import Image",
         "from typing import Protocol",
     )

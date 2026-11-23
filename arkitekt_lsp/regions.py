@@ -177,7 +177,10 @@ def _header_of(value: str) -> dict[str, str]:
     start = lead.end() if lead else 0
     end = value.find(">", start)
     tag = value[start : end if end >= 0 else len(value)]
-    return {match.group(1): match.group(2) if match.group(2) is not None else match.group(3) for match in _ATTRIBUTE.finditer(tag)}
+    return {
+        match.group(1): match.group(2) if match.group(2) is not None else match.group(3)
+        for match in _ATTRIBUTE.finditer(tag)
+    }
 
 
 def blok_literals(source: str) -> list[BlokLiteral]:
@@ -215,7 +218,11 @@ def blok_literals(source: str) -> list[BlokLiteral]:
             continue
         header = _header_of(value)
         context = load_vocabulary().blok.contexts.get(header.get("context", ""))
-        kind = header.get("kind") if header.get("kind") in load_vocabulary().kinds else None
+        kind = (
+            header.get("kind")
+            if header.get("kind") in load_vocabulary().kinds
+            else None
+        )
         found.append(
             BlokLiteral(
                 start=start,
@@ -259,17 +266,28 @@ def generated_bloks(source: str) -> list[tuple[int, int]]:
             rest = token.string[len(letters) :]
             quote = rest[:3] if rest[:3] in ('"""', "'''") else rest[:1]
             text = rest[len(quote) : len(rest) - len(quote)]
-            if "{" in text.replace("{{", "") and _root_of(text.partition("{")[0]) is not None:
+            if (
+                "{" in text.replace("{{", "")
+                and _root_of(text.partition("{")[0]) is not None
+            ):
                 found.append((at, at + len(letters) + len(quote)))
         elif token.type == _FSTRING_START:
             open_strings.append(_OpenFString((at, at + len(token.string)), statement))
-        elif token.type == _FSTRING_MIDDLE and open_strings and not open_strings[-1].has_field:
+        elif (
+            token.type == _FSTRING_MIDDLE
+            and open_strings
+            and not open_strings[-1].has_field
+        ):
             open_strings[-1].text.append(token.string)
         elif token.type == tokenize.OP and token.string == "{" and open_strings:
             open_strings[-1].has_field = True
         elif token.type == _FSTRING_END and open_strings:
             closed = open_strings.pop()
-            if closed.has_field and not closed.statement and _root_of("".join(closed.text)) is not None:
+            if (
+                closed.has_field
+                and not closed.statement
+                and _root_of("".join(closed.text)) is not None
+            ):
                 found.append(closed.span)
     return sorted(found)
 

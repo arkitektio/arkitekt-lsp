@@ -37,7 +37,9 @@ def test_each_blok_literal_is_found_with_what_its_blok_says() -> None:
 
 
 def test_a_blok_that_does_not_say_what_it_is_yet_is_still_a_blok() -> None:
-    (literal,) = blok_literals('@app.workflow(bloks=\'<Blok context="panel"><Card /></Blok>\')\ndef f(): ...\n')
+    (literal,) = blok_literals(
+        "@app.workflow(bloks='<Blok context=\"panel\"><Card /></Blok>')\ndef f(): ...\n"
+    )
 
     assert (literal.context, literal.kind) == ("PANEL", None)
 
@@ -56,7 +58,9 @@ def test_escapes_are_resolved_and_mapped() -> None:
 
     (literal,) = blok_literals(source)
 
-    assert literal.value == '<Blok kind="agent" context="panel"><Text text="a" /></Blok>'
+    assert (
+        literal.value == '<Blok kind="agent" context="panel"><Text text="a" /></Blok>'
+    )
     assert (literal.context, literal.kind) == ("PANEL", "agent")
     assert not literal.exact
     quote = literal.value.index('"')
@@ -66,11 +70,16 @@ def test_escapes_are_resolved_and_mapped() -> None:
 def test_a_source_being_typed_still_yields_the_bloks_before_the_break() -> None:
     source = 'app.blok("panel", "<Blok><Card /></Blok>")\napp.blok("open", """<Blok><Ca'
 
-    assert [literal.value for literal in blok_literals(source)] == ["<Blok><Card /></Blok>"]
+    assert [literal.value for literal in blok_literals(source)] == [
+        "<Blok><Card /></Blok>"
+    ]
 
 
 def test_a_docstring_is_never_a_blok() -> None:
-    assert blok_literals('def f():\n    """<Blok> in a docstring."""\n\n"""<Blok />"""\n') == []
+    assert (
+        blok_literals('def f():\n    """<Blok> in a docstring."""\n\n"""<Blok />"""\n')
+        == []
+    )
 
 
 def test_bytes_and_f_strings_are_never_bloks() -> None:

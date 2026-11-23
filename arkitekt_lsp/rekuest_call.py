@@ -61,7 +61,9 @@ class QueriedClient(Composition):
 
     rath: Rath
 
-    async def aquery(self, document: str, variables: Mapping[str, Any]) -> dict[str, Any]:
+    async def aquery(
+        self, document: str, variables: Mapping[str, Any]
+    ) -> dict[str, Any]:
         result = await self.rath.aquery(document, dict(variables))
         return dict(result.data)
 
@@ -72,14 +74,20 @@ class RekuestCall(QueriedClient):
     __scopes__: ClassVar[tuple[str, ...]] = ("rekuest_read", "rekuest_root_call")
 
     async def aaction(self, action_hash: str) -> dict[str, Any] | None:
-        document = resources.files("arkitekt_lsp").joinpath("action_query.graphql").read_text(encoding="utf-8")
+        document = (
+            resources.files("arkitekt_lsp")
+            .joinpath("action_query.graphql")
+            .read_text(encoding="utf-8")
+        )
         return (await self.aquery(document, {"hash": action_hash})).get("action")
 
     async def aassign(self, input_: Mapping[str, Any]) -> dict[str, Any]:
         return (await self.rath.aquery(_ASSIGN, {"input": dict(input_)})).data["assign"]
 
     async def acancel(self, task: str) -> dict[str, Any]:
-        return (await self.rath.aquery(_CANCEL, {"input": {"task": task}})).data["cancel"]
+        return (await self.rath.aquery(_CANCEL, {"input": {"task": task}})).data[
+            "cancel"
+        ]
 
     async def aevents(self, task: str) -> list[dict[str, Any]]:
         answer = (await self.rath.aquery(_EVENTS, {"id": task})).data["task"]
@@ -96,7 +104,11 @@ def _rath(alias: Alias, tokens: TokenLoader) -> Rath:
     return Rath(
         link=compose(
             FaktsAuthLink(token_loader=tokens),
-            AIOHttpLink(endpoint_url=alias.to_http_path("graphql"), proxy=alias.proxy, ssl_context=alias.ssl_context()),
+            AIOHttpLink(
+                endpoint_url=alias.to_http_path("graphql"),
+                proxy=alias.proxy,
+                ssl_context=alias.ssl_context(),
+            ),
         )
     )
 
@@ -106,7 +118,9 @@ registry = AppRegistry()
 
 @registry.service()
 def rekuest_call(
-    rekuest: Annotated[Alias, Require("live.arkitekt.rekuest", "Where your apps' actions are called")],
+    rekuest: Annotated[
+        Alias, Require("live.arkitekt.rekuest", "Where your apps' actions are called")
+    ],
     tokens: TokenLoader,
 ) -> RekuestCall:
     return RekuestCall(rath=_rath(rekuest, tokens))
@@ -114,7 +128,10 @@ def rekuest_call(
 
 @registry.service()
 def mikro_read(
-    mikro: Annotated[Alias, Require("live.arkitekt.mikro", "Where the images an action's pickers list are")],
+    mikro: Annotated[
+        Alias,
+        Require("live.arkitekt.mikro", "Where the images an action's pickers list are"),
+    ],
     tokens: TokenLoader,
 ) -> MikroRead:
     return MikroRead(rath=_rath(mikro, tokens))
@@ -126,7 +143,16 @@ SERVICES: dict[str, type[QueriedClient]] = {"rekuest": RekuestCall, "mikro": Mik
 
 def actions_app(version: str = "0.0.0") -> App[Any]:
     """The app the language server logs in as when it may call: still no agent, nothing it offers."""
-    return App(ACTIONS_IDENTIFIER, version, services=[rekuest_read, rekuest_call, mikro_read])
+    return App(
+        ACTIONS_IDENTIFIER, version, services=[rekuest_read, rekuest_call, mikro_read]
+    )
 
 
-__all__ = ["ACTIONS_IDENTIFIER", "SERVICES", "MikroRead", "QueriedClient", "RekuestCall", "actions_app"]
+__all__ = [
+    "ACTIONS_IDENTIFIER",
+    "SERVICES",
+    "MikroRead",
+    "QueriedClient",
+    "RekuestCall",
+    "actions_app",
+]

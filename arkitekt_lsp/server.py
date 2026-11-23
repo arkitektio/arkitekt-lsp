@@ -68,7 +68,12 @@ from arkitekt_lsp.declare import (
     state_missing,
     write_dependency,
 )
-from arkitekt_lsp.live import forget_unavailable, is_address, live_findings, published_catalogs
+from arkitekt_lsp.live import (
+    forget_unavailable,
+    is_address,
+    live_findings,
+    published_catalogs,
+)
 from arkitekt_lsp.placement import Span, place
 from arkitekt_lsp.regions import BlokLiteral, blok_literals, generated_bloks
 from arkitekt_lsp.scopes import Anchors, anchor_bloks, blok_of
@@ -176,7 +181,11 @@ class Settings:
             self.target = options["target"] or None
         if isinstance(options.get("catalogs"), list):
             # Only addresses: nothing else is ever pulled, whatever a workspace's settings say.
-            self.catalogs = tuple(dict.fromkeys(catalog for catalog in options["catalogs"] if is_address(catalog)))
+            self.catalogs = tuple(
+                dict.fromkeys(
+                    catalog for catalog in options["catalogs"] if is_address(catalog)
+                )
+            )
         if options.get("clientPicksDependencies") is True:
             self.client_picks_dependencies = True
         if options.get("clientShowsLogin") is True:
@@ -213,9 +222,13 @@ class CheckState:
     """Per file (real path), the bloks whose source was one of its literals when the report came."""
     anchors: dict[str, Anchors] | None = None
     """Per file (real path), the blok each of its literals held when the report came."""
-    availability: dict[str, Availability] = field(default_factory=dict[str, Availability])
+    availability: dict[str, Availability] = field(
+        default_factory=dict[str, Availability]
+    )
     """Per protocol the report lists, by name, who the server said would satisfy it."""
-    offered: dict[str, dict[str, Any] | None] = field(default_factory=dict[str, dict[str, Any] | None])
+    offered: dict[str, dict[str, Any] | None] = field(
+        default_factory=dict[str, dict[str, Any] | None]
+    )
     """Per action hash the report lists, what the server knows by it (None: nothing): the panel's lens."""
     process: asyncio.subprocess.Process | None = None
     generation: int = 0
@@ -225,7 +238,11 @@ class ArkitektLanguageServer(LanguageServer):
     """See the module: the check, its placement and the live layer, for one editor."""
 
     def __init__(self) -> None:
-        super().__init__("arkitekt-lsp", __version__, text_document_sync_kind=types.TextDocumentSyncKind.Incremental)
+        super().__init__(
+            "arkitekt-lsp",
+            __version__,
+            text_document_sync_kind=types.TextDocumentSyncKind.Incremental,
+        )
         self.settings = Settings()
         self.checks: dict[CheckKey, CheckState] = {}
         self.published: dict[str, str] = {}
@@ -242,7 +259,10 @@ class ArkitektLanguageServer(LanguageServer):
     # -- which app
 
     def folders(self) -> list[Path]:
-        folders = [Path(to_fs_path(folder.uri) or "") for folder in self.workspace.folders.values()]
+        folders = [
+            Path(to_fs_path(folder.uri) or "")
+            for folder in self.workspace.folders.values()
+        ]
         if not folders and self.workspace.root_path:
             folders = [Path(self.workspace.root_path)]
         return [folder.resolve() for folder in folders]
@@ -315,13 +335,17 @@ class ArkitektLanguageServer(LanguageServer):
             )
             state.process = process
             try:
-                _, stderr = await asyncio.wait_for(process.communicate(), self.settings.timeout)
+                _, stderr = await asyncio.wait_for(
+                    process.communicate(), self.settings.timeout
+                )
             except TimeoutError:
                 process.kill()
                 await process.wait()
                 if state.generation == generation:
                     self.status(
-                        "failed", key, message=f"The check took longer than {self.settings.timeout:g}s and was stopped."
+                        "failed",
+                        key,
+                        message=f"The check took longer than {self.settings.timeout:g}s and was stopped.",
                     )
                 return
             if state.generation != generation:
@@ -329,7 +353,9 @@ class ArkitektLanguageServer(LanguageServer):
             if not out.exists():
                 said = stderr.decode(errors="replace").strip()
                 logger.warning("arkitekt check wrote no report for %s: %s", key, said)
-                self.status("failed", key, message=said or "The check ended without a report.")
+                self.status(
+                    "failed", key, message=said or "The check ended without a report."
+                )
                 return
             report = json.loads(out.read_text())
         state.report = report
@@ -341,7 +367,11 @@ class ArkitektLanguageServer(LanguageServer):
         if self.connection is not None:
             asyncio.ensure_future(self.ask_about(state))
         diagnostics = report.get("diagnostics", [])
-        unplaced = [d["message"] for d in diagnostics if not d.get("file") or not Path(d["file"]).exists()]
+        unplaced = [
+            d["message"]
+            for d in diagnostics
+            if not d.get("file") or not Path(d["file"]).exists()
+        ]
         self.status(
             "ok" if report.get("ok") else "failed",
             key,
@@ -352,7 +382,11 @@ class ArkitektLanguageServer(LanguageServer):
 
     def locate(self, report: dict[str, Any]) -> dict[str, set[str]]:
         """Per file the report names, the bloks whose source is one of its literals as it reads now."""
-        bloks = {blok["blok"]: blok["source"] for blok in report.get("bloks", []) if "source" in blok}
+        bloks = {
+            blok["blok"]: blok["source"]
+            for blok in report.get("bloks", [])
+            if "source" in blok
+        }
         located: dict[str, set[str]] = {}
         for found in report.get("diagnostics", []):
             file, blok = found.get("file"), found.get("blok")
@@ -362,11 +396,17 @@ class ArkitektLanguageServer(LanguageServer):
             if path not in located:
                 uri = from_fs_path(file)
                 try:
-                    text = self.workspace.get_text_document(uri).source if uri else Path(file).read_text()
+                    text = (
+                        self.workspace.get_text_document(uri).source
+                        if uri
+                        else Path(file).read_text()
+                    )
                 except OSError:
                     continue
                 values = {literal.value for literal in blok_literals(text)}
-                located[path] = {key for key, source in bloks.items() if source in values}
+                located[path] = {
+                    key for key, source in bloks.items() if source in values
+                }
         return located
 
     def anchor(self, report: dict[str, Any]) -> dict[str, Anchors]:
@@ -381,19 +421,31 @@ class ArkitektLanguageServer(LanguageServer):
                 continue
             uri = from_fs_path(file)
             try:
-                text = self.workspace.get_text_document(uri).source if uri else Path(file).read_text()
+                text = (
+                    self.workspace.get_text_document(uri).source
+                    if uri
+                    else Path(file).read_text()
+                )
             except OSError:
                 continue
             anchors[path] = anchor_bloks(text, blok_literals(text), path, report)
         return anchors
 
-    def scope_of(self, path: str, literals: list[BlokLiteral], index: int) -> tuple[str, dict[str, Any]] | None:
+    def scope_of(
+        self, path: str, literals: list[BlokLiteral], index: int
+    ) -> tuple[str, dict[str, Any]] | None:
         """The blok the ``index``-th literal of the file at real ``path`` is and its scope, if a check saw it."""
         for state in self.checks.values():
             if state.last_good is None:
                 continue
-            records = {blok["blok"]: blok for blok in state.last_good.get("bloks", []) if "scope" in blok}
-            sources = {key: blok["source"] for key, blok in records.items() if "source" in blok}
+            records = {
+                blok["blok"]: blok
+                for blok in state.last_good.get("bloks", [])
+                if "scope" in blok
+            }
+            sources = {
+                key: blok["source"] for key, blok in records.items() if "source" in blok
+            }
             key = blok_of(literals, index, (state.anchors or {}).get(path), sources)
             if key is not None and key in records:
                 return key, records[key]["scope"]
@@ -402,13 +454,23 @@ class ArkitektLanguageServer(LanguageServer):
     # -- the server (connected only)
 
     def connection_status(self, state: str, message: str | None = None) -> None:
-        url = self.connection.url if self.connection is not None else self.settings.server_url
-        self.protocol.notify(REKUEST_STATUS, {"state": state, "url": url, "message": message})
+        url = (
+            self.connection.url
+            if self.connection is not None
+            else self.settings.server_url
+        )
+        self.protocol.notify(
+            REKUEST_STATUS, {"state": state, "url": url, "message": message}
+        )
 
     async def show_login(self, challenge: Any) -> None:  # noqa: ANN401 - fakts' DeviceCodeChallenge
         """Offer the login in the editor; opening it is the user's click, and waiting is not on them."""
         if self.settings.client_shows_login:
-            url = self.connection.url if self.connection is not None else self.settings.server_url
+            url = (
+                self.connection.url
+                if self.connection is not None
+                else self.settings.server_url
+            )
             self.protocol.notify(
                 REKUEST_CHALLENGE,
                 {
@@ -430,7 +492,9 @@ class ArkitektLanguageServer(LanguageServer):
             )
             if chosen is not None:
                 await self.window_show_document_async(
-                    types.ShowDocumentParams(uri=challenge.verification_uri_complete, external=True)
+                    types.ShowDocumentParams(
+                        uri=challenge.verification_uri_complete, external=True
+                    )
                 )
 
         asyncio.ensure_future(offer())
@@ -439,7 +503,11 @@ class ArkitektLanguageServer(LanguageServer):
         """Make the connection what the settings say: none, or one to their server."""
         wanted = self.settings.server_url if self.settings.connect else None
         current = self.connection
-        if current is not None and current.url == wanted and current.actions == self.settings.actions:
+        if (
+            current is not None
+            and current.url == wanted
+            and current.actions == self.settings.actions
+        ):
             return
         if current is not None:
             self.connection = None
@@ -451,10 +519,18 @@ class ArkitektLanguageServer(LanguageServer):
             self.connection_status("off")
         if wanted is None:
             return
-        connection = Connection(wanted, self.connection_status, self.show_login, __version__, self.settings.actions)
+        connection = Connection(
+            wanted,
+            self.connection_status,
+            self.show_login,
+            __version__,
+            self.settings.actions,
+        )
         self.connection = connection
         await connection.start()
-        if self.connection is not connection:  # turned off or moved while the login was pending
+        if (
+            self.connection is not connection
+        ):  # turned off or moved while the login was pending
             await connection.stop()
             return
         for state in self.checks.values():
@@ -486,12 +562,18 @@ class ArkitektLanguageServer(LanguageServer):
     async def log_out(self) -> bool:
         """Leave, then revoke and forget the login; whether there was one. In that order: a run still
         going would write the session back when its token rotates."""
-        url = self.connection.url if self.connection is not None else self.settings.server_url
+        url = (
+            self.connection.url
+            if self.connection is not None
+            else self.settings.server_url
+        )
         self.settings.connect = False
         await self.connect_as_configured()
         # Both logins: the one that may call must not outlive turning the setting off.
         forgotten = await asyncio.to_thread(forget_login, url, __version__, True)
-        forgotten = await asyncio.to_thread(forget_login, url, __version__, False) or forgotten
+        forgotten = (
+            await asyncio.to_thread(forget_login, url, __version__, False) or forgotten
+        )
         self.connection_status("off")
         return forgotten
 
@@ -510,7 +592,11 @@ class ArkitektLanguageServer(LanguageServer):
             state.offered = await self.ask_about_actions(connection, state.last_good)
         self.refresh_all()
         capabilities = self.protocol.client_capabilities.workspace
-        if capabilities is not None and capabilities.code_lens is not None and capabilities.code_lens.refresh_support:
+        if (
+            capabilities is not None
+            and capabilities.code_lens is not None
+            and capabilities.code_lens.refresh_support
+        ):
             self.workspace_code_lens_refresh(None)
 
     async def ask_about_actions(
@@ -518,19 +604,33 @@ class ArkitektLanguageServer(LanguageServer):
     ) -> dict[str, dict[str, Any] | None]:
         """What the server knows by each action's hash; an action it could not be asked about is left out."""
         hashes = [str(action["hash"]) for action in report.get("actions") or ()]
-        answers = await asyncio.gather(*(connection.action(hash_) for hash_ in hashes), return_exceptions=True)
+        answers = await asyncio.gather(
+            *(connection.action(hash_) for hash_ in hashes), return_exceptions=True
+        )
         for answer in answers:
             if isinstance(answer, BaseException):
                 logger.warning("Asking the server about an action failed: %s", answer)
-        return {hash_: answer for hash_, answer in zip(hashes, answers) if not isinstance(answer, BaseException)}
+        return {
+            hash_: answer
+            for hash_, answer in zip(hashes, answers)
+            if not isinstance(answer, BaseException)
+        }
 
     def action_lenses(self, path: str, document: Any) -> list[types.CodeLens]:  # noqa: ANN401 - pygls' document
         """A lens above each action of the file at real ``path``: run it, or why it cannot run yet."""
         lenses: list[types.CodeLens] = []
         for state in self.checks.values():
             for action in (state.last_good or {}).get("actions") or ():
-                file, line, hash_ = action.get("file"), action.get("line"), str(action.get("hash"))
-                if not isinstance(file, str) or not isinstance(line, int) or os.path.realpath(file) != path:
+                file, line, hash_ = (
+                    action.get("file"),
+                    action.get("line"),
+                    str(action.get("hash")),
+                )
+                if (
+                    not isinstance(file, str)
+                    or not isinstance(line, int)
+                    or os.path.realpath(file) != path
+                ):
                     continue
                 if hash_ not in state.offered or line < 1 or line > len(document.lines):
                     continue
@@ -541,7 +641,13 @@ class ArkitektLanguageServer(LanguageServer):
                         command=types.Command(
                             title=action_lens_title(state.offered[hash_]),
                             command="arkitekt.runAction",
-                            arguments=[{"hash": hash_, "name": action.get("name") or action.get("interface")}],
+                            arguments=[
+                                {
+                                    "hash": hash_,
+                                    "name": action.get("name")
+                                    or action.get("interface"),
+                                }
+                            ],
                         ),
                     )
                 )
@@ -560,18 +666,33 @@ class ArkitektLanguageServer(LanguageServer):
                 raise
             except Exception as error:  # noqa: BLE001 - the page says it lost track, the task goes on
                 self.protocol.notify(
-                    TASK, {"task": task, "events": [], "done": True, "error": str(error) or type(error).__name__}
+                    TASK,
+                    {
+                        "task": task,
+                        "events": [],
+                        "done": True,
+                        "error": str(error) or type(error).__name__,
+                    },
                 )
 
         asyncio.ensure_future(follow())
 
-    def about_protocols(self, path: str, text: str) -> list[tuple[tuple[int, int], dict[str, Any], Availability]]:
+    def about_protocols(
+        self, path: str, text: str
+    ) -> list[tuple[tuple[int, int], dict[str, Any], Availability]]:
         """The protocols declared in the file at real ``path``, where each is now and what was said."""
         found: list[tuple[tuple[int, int], dict[str, Any], Availability]] = []
         for state in self.checks.values():
             for protocol in declared_protocols(state.last_good or {}):
-                file, answer = protocol.get("file"), state.availability.get(protocol["name"])
-                if not isinstance(file, str) or answer is None or os.path.realpath(file) != path:
+                file, answer = (
+                    protocol.get("file"),
+                    state.availability.get(protocol["name"]),
+                )
+                if (
+                    not isinstance(file, str)
+                    or answer is None
+                    or os.path.realpath(file) != path
+                ):
                     continue
                 span = class_span(text, protocol["name"])
                 if span is not None:
@@ -586,7 +707,9 @@ class ArkitektLanguageServer(LanguageServer):
     def check_if_new(self, uri: str) -> None:
         key = self.check_key(uri)
         if key is not None and self.settings.check_on_save and key not in self.checks:
-            self.checks[key] = CheckState()  # now, so a second open of the same app does not check it twice
+            self.checks[key] = (
+                CheckState()
+            )  # now, so a second open of the same app does not check it twice
             asyncio.ensure_future(self.run_check(key))
 
     def catalogs_changed(self) -> None:
@@ -625,7 +748,8 @@ class ArkitektLanguageServer(LanguageServer):
     ) -> types.Diagnostic:
         return types.Diagnostic(
             range=types.Range(
-                start=document.client_position_at_offset(span[0]), end=document.client_position_at_offset(span[1])
+                start=document.client_position_at_offset(span[0]),
+                end=document.client_position_at_offset(span[1]),
             ),
             severity=_SEVERITY.get(level, types.DiagnosticSeverity.Information),
             code=code,
@@ -652,12 +776,22 @@ class ArkitektLanguageServer(LanguageServer):
             for state in self.checks.values():
                 if state.report is None:
                     continue
-                bloks = {blok["blok"]: blok["source"] for blok in state.report.get("bloks", []) if "source" in blok}
+                bloks = {
+                    blok["blok"]: blok["source"]
+                    for blok in state.report.get("bloks", [])
+                    if "source" in blok
+                }
                 checked.update(bloks.values())
                 for found in state.report.get("diagnostics", []):
                     if not found.get("file") or os.path.realpath(found["file"]) != path:
                         continue
-                    span = place(found, text, literals, bloks, (state.located or {}).get(path, ()))
+                    span = place(
+                        found,
+                        text,
+                        literals,
+                        bloks,
+                        (state.located or {}).get(path, ()),
+                    )
                     if span is None:
                         continue
                     told.add((found.get("code"), span))
@@ -677,14 +811,22 @@ class ArkitektLanguageServer(LanguageServer):
                     for span in generated_bloks(text):
                         diagnostics.append(
                             self.diagnostic(
-                                document, span, "warning", "blok.generated", _GENERATED, _GENERATED_HINT, LIVE_SOURCE
+                                document,
+                                span,
+                                "warning",
+                                "blok.generated",
+                                _GENERATED,
+                                _GENERATED_HINT,
+                                LIVE_SOURCE,
                             )
                         )
                 for index, literal in enumerate(literals):
                     if literal.value in checked:
                         continue  # as the check saw it: the check has said it
                     known = self.scope_of(path, literals, index)
-                    for finding in live_findings(literal, known[1] if known is not None else None):
+                    for finding in live_findings(
+                        literal, known[1] if known is not None else None
+                    ):
                         if (finding.code, finding.span) in told:
                             continue
                         diagnostics.append(
@@ -702,11 +844,21 @@ class ArkitektLanguageServer(LanguageServer):
                 said = problem(protocol["dependency"], answer)
                 if said is not None:
                     diagnostics.append(
-                        self.diagnostic(document, span, said[0], "rekuest.dependency", said[1], None, REKUEST_SOURCE)
+                        self.diagnostic(
+                            document,
+                            span,
+                            said[0],
+                            "rekuest.dependency",
+                            said[1],
+                            None,
+                            REKUEST_SOURCE,
+                        )
                     )
         if not diagnostics and unquote(uri) not in self.published:
             return
-        self.text_document_publish_diagnostics(types.PublishDiagnosticsParams(uri=uri, diagnostics=diagnostics))
+        self.text_document_publish_diagnostics(
+            types.PublishDiagnosticsParams(uri=uri, diagnostics=diagnostics)
+        )
         if diagnostics:
             self.published[unquote(uri)] = uri
         else:
@@ -715,7 +867,12 @@ class ArkitektLanguageServer(LanguageServer):
     def refresh_all(self) -> None:
         """Republish every file a check named, every file told before, and every open one."""
         uris = dict(self.published)
-        uris.update({unquote(document.uri): document.uri for document in self.workspace.text_documents.values()})
+        uris.update(
+            {
+                unquote(document.uri): document.uri
+                for document in self.workspace.text_documents.values()
+            }
+        )
         for state in self.checks.values():
             for found in (state.report or {}).get("diagnostics", []):
                 if found.get("file"):
@@ -730,7 +887,9 @@ class ArkitektLanguageServer(LanguageServer):
         pending = self.pending.pop(uri, None)
         if pending is not None:
             pending.cancel()
-        self.pending[uri] = asyncio.get_running_loop().call_later(_LIVE_DELAY, self.refresh, uri)
+        self.pending[uri] = asyncio.get_running_loop().call_later(
+            _LIVE_DELAY, self.refresh, uri
+        )
 
     # -- regions
 
@@ -773,12 +932,16 @@ def initialize(ls: ArkitektLanguageServer, params: types.InitializeParams) -> No
 
 
 @server.feature(types.INITIALIZED)
-async def initialized(ls: ArkitektLanguageServer, params: types.InitializedParams) -> None:
+async def initialized(
+    ls: ArkitektLanguageServer, params: types.InitializedParams
+) -> None:
     await ls.connect_as_configured()
 
 
 @server.feature(types.WORKSPACE_DID_CHANGE_CONFIGURATION)
-async def did_change_configuration(ls: ArkitektLanguageServer, params: types.DidChangeConfigurationParams) -> None:
+async def did_change_configuration(
+    ls: ArkitektLanguageServer, params: types.DidChangeConfigurationParams
+) -> None:
     settings = params.settings
     before = ls.settings.target
     warned = ls.settings.warn_on_fstrings
@@ -796,31 +959,41 @@ async def did_change_configuration(ls: ArkitektLanguageServer, params: types.Did
 
 
 @server.feature(types.TEXT_DOCUMENT_DID_OPEN)
-async def did_open(ls: ArkitektLanguageServer, params: types.DidOpenTextDocumentParams) -> None:
+async def did_open(
+    ls: ArkitektLanguageServer, params: types.DidOpenTextDocumentParams
+) -> None:
     uri = params.text_document.uri
     ls.refresh(uri)
     ls.check_if_new(uri)
 
 
 @server.feature(types.TEXT_DOCUMENT_DID_CHANGE)
-async def did_change(ls: ArkitektLanguageServer, params: types.DidChangeTextDocumentParams) -> None:
+async def did_change(
+    ls: ArkitektLanguageServer, params: types.DidChangeTextDocumentParams
+) -> None:
     ls.refresh_soon(params.text_document.uri)
 
 
 @server.feature(types.TEXT_DOCUMENT_DID_SAVE)
-async def did_save(ls: ArkitektLanguageServer, params: types.DidSaveTextDocumentParams) -> None:
+async def did_save(
+    ls: ArkitektLanguageServer, params: types.DidSaveTextDocumentParams
+) -> None:
     ls.refresh(params.text_document.uri)
     if ls.settings.check_on_save:
         ls.schedule_check(params.text_document.uri)
 
 
 @server.feature(types.TEXT_DOCUMENT_DID_CLOSE)
-def did_close(ls: ArkitektLanguageServer, params: types.DidCloseTextDocumentParams) -> None:
+def did_close(
+    ls: ArkitektLanguageServer, params: types.DidCloseTextDocumentParams
+) -> None:
     ls.refresh(params.text_document.uri)
 
 
 @server.feature(types.TEXT_DOCUMENT_CODE_LENS)
-def code_lens(ls: ArkitektLanguageServer, params: types.CodeLensParams) -> list[types.CodeLens]:
+def code_lens(
+    ls: ArkitektLanguageServer, params: types.CodeLensParams
+) -> list[types.CodeLens]:
     """Above each protocol, how many agents would satisfy it. Nothing unless connected."""
     uri = params.text_document.uri
     fs_path = to_fs_path(uri)
@@ -828,12 +1001,16 @@ def code_lens(ls: ArkitektLanguageServer, params: types.CodeLensParams) -> list[
         return []
     document = ls.workspace.get_text_document(uri)
     lenses: list[types.CodeLens] = []
-    for span, _, answer in ls.about_protocols(os.path.realpath(fs_path), document.source):
+    for span, _, answer in ls.about_protocols(
+        os.path.realpath(fs_path), document.source
+    ):
         at = document.client_position_at_offset(span[0])
         lenses.append(
             types.CodeLens(
                 range=types.Range(start=at, end=at),
-                command=types.Command(title=lens_title(answer), command="arkitekt.rekuest.refresh"),
+                command=types.Command(
+                    title=lens_title(answer), command="arkitekt.rekuest.refresh"
+                ),
             )
         )
     lenses.extend(ls.action_lenses(os.path.realpath(fs_path), document))
@@ -843,14 +1020,19 @@ def code_lens(ls: ArkitektLanguageServer, params: types.CodeLensParams) -> list[
             lenses.append(
                 types.CodeLens(
                     range=types.Range(start=at, end=at),
-                    command=types.Command(title="$(add) Add a dependency", command="arkitekt.addDependency"),
+                    command=types.Command(
+                        title="$(add) Add a dependency",
+                        command="arkitekt.addDependency",
+                    ),
                 )
             )
     return lenses
 
 
 @server.feature(types.TEXT_DOCUMENT_HOVER)
-async def hover(ls: ArkitektLanguageServer, params: types.HoverParams) -> types.Hover | None:
+async def hover(
+    ls: ArkitektLanguageServer, params: types.HoverParams
+) -> types.Hover | None:
     """On a protocol's name or a blok's ``deps.<key>``: the agents that would satisfy it."""
     connection = ls.connection
     fs_path = to_fs_path(params.text_document.uri)
@@ -863,7 +1045,8 @@ async def hover(ls: ArkitektLanguageServer, params: types.HoverParams) -> types.
         if span[0] <= offset <= span[1]:
             return types.Hover(
                 contents=types.MarkupContent(
-                    kind=types.MarkupKind.Markdown, value=hover_markdown(protocol["name"], answer)
+                    kind=types.MarkupKind.Markdown,
+                    value=hover_markdown(protocol["name"], answer),
                 )
             )
     literals = blok_literals(document.source)
@@ -873,12 +1056,19 @@ async def hover(ls: ArkitektLanguageServer, params: types.HoverParams) -> types.
         known = ls.scope_of(path, literals, index) if key is not None else None
         if known is None:
             continue
-        dependency = next((d for d in known[1].get("dependencies") or () if d.get("key") == key), None)
-        answer = await connection.availability(dependency) if dependency is not None else None
+        dependency = next(
+            (d for d in known[1].get("dependencies") or () if d.get("key") == key), None
+        )
+        answer = (
+            await connection.availability(dependency)
+            if dependency is not None
+            else None
+        )
         if answer is not None:
             return types.Hover(
                 contents=types.MarkupContent(
-                    kind=types.MarkupKind.Markdown, value=hover_markdown(f"deps.{key}", answer)
+                    kind=types.MarkupKind.Markdown,
+                    value=hover_markdown(f"deps.{key}", answer),
                 )
             )
     return None
@@ -897,7 +1087,10 @@ async def rekuest_refresh(ls: ArkitektLanguageServer, params: Any) -> None:  # n
 @server.feature(APPS)
 async def apps(ls: ArkitektLanguageServer, params: Any) -> dict[str, Any]:  # noqa: ANN401 - a custom request
     """The apps of the workspace and the current choice, read rather than imported."""
-    return {"apps": await asyncio.to_thread(find_apps, ls.folders()), "target": ls.settings.target}
+    return {
+        "apps": await asyncio.to_thread(find_apps, ls.folders()),
+        "target": ls.settings.target,
+    }
 
 
 @server.feature(CATALOG)
@@ -911,7 +1104,11 @@ async def catalog(ls: ArkitektLanguageServer, params: Any) -> dict[str, Any]:  #
     if not isinstance(identifier, str):
         return {"id": None, "catalogs": [], "error": "No catalog was named."}
     try:
-        texts = await asyncio.to_thread(published_catalogs, identifier, refresh=getattr(params, "refresh", False) is True)
+        texts = await asyncio.to_thread(
+            published_catalogs,
+            identifier,
+            refresh=getattr(params, "refresh", False) is True,
+        )
     except CatalogUnavailable as error:
         return {"id": identifier, "catalogs": [], "error": str(error)}
     return {"id": identifier, "catalogs": texts, "error": None}
@@ -946,7 +1143,10 @@ async def rekuest_offers(ls: ArkitektLanguageServer, params: Any) -> dict[str, A
                     }
                     for a in offer["actions"]
                 ],
-                "states": [{"key": s["key"], "missing": state_missing(s, known)} for s in offer["states"]],
+                "states": [
+                    {"key": s["key"], "missing": state_missing(s, known)}
+                    for s in offer["states"]
+                ],
             }
             for offer in offers.values()
         ]
@@ -976,13 +1176,25 @@ async def rekuest_declare(ls: ArkitektLanguageServer, params: Any) -> dict[str, 
     at_end = written.line >= len(source.splitlines()) and not source.endswith("\n")
     place = types.Position(line=written.line, character=0)
     edits = [
-        types.TextEdit(range=types.Range(start=place, end=place), new_text=("\n" if at_end else "") + written.source)
+        types.TextEdit(
+            range=types.Range(start=place, end=place),
+            new_text=("\n" if at_end else "") + written.source,
+        )
     ]
     if written.imports:
         at = types.Position(line=line, character=0)
-        edits.insert(0, types.TextEdit(range=types.Range(start=at, end=at), new_text="\n".join(written.imports) + "\n"))
+        edits.insert(
+            0,
+            types.TextEdit(
+                range=types.Range(start=at, end=at),
+                new_text="\n".join(written.imports) + "\n",
+            ),
+        )
     answer = await ls.workspace_apply_edit_async(
-        types.ApplyWorkspaceEditParams(edit=types.WorkspaceEdit(changes={params.uri: edits}), label="Add a dependency")
+        types.ApplyWorkspaceEditParams(
+            edit=types.WorkspaceEdit(changes={params.uri: edits}),
+            label="Add a dependency",
+        )
     )
     if not answer.applied:
         return {"error": answer.failure_reason or "The editor did not apply the edit."}
@@ -1007,13 +1219,19 @@ def _answer_of(error: Exception) -> dict[str, Any]:
     """A failed panel request as the panel shows it: never a protocol error, the page has to say why."""
     if isinstance(error, ActionsUnavailable):
         return {"error": str(error)}
-    return {"error": f"{type(error).__name__}: {error}" if str(error) else type(error).__name__}
+    return {
+        "error": f"{type(error).__name__}: {error}"
+        if str(error)
+        else type(error).__name__
+    }
 
 
 def _connection_for_actions(ls: ArkitektLanguageServer) -> Connection:
     connection = ls.connection
     if connection is None or not connection.connected or not connection.actions:
-        raise ActionsUnavailable("Actions are off: set arkitekt.server.actions and connect to the server.")
+        raise ActionsUnavailable(
+            "Actions are off: set arkitekt.server.actions and connect to the server."
+        )
     return connection
 
 
@@ -1074,7 +1292,8 @@ async def check(ls: ArkitektLanguageServer, params: Any) -> None:  # noqa: ANN40
     if key is None:
         ls.window_show_message(
             types.ShowMessageParams(
-                type=types.MessageType.Info, message="This file belongs to no app arkitekt check knows of."
+                type=types.MessageType.Info,
+                message="This file belongs to no app arkitekt check knows of.",
             )
         )
         return
@@ -1084,10 +1303,15 @@ async def check(ls: ArkitektLanguageServer, params: Any) -> None:  # noqa: ANN40
 def main() -> None:
     """``arkitekt-lsp``: serve over stdio, the way an editor starts a language server."""
     parser = argparse.ArgumentParser(
-        prog="arkitekt-lsp", description="The Arkitekt language server: arkitekt check, in the BSX of every blok."
+        prog="arkitekt-lsp",
+        description="The Arkitekt language server: arkitekt check, in the BSX of every blok.",
     )
-    parser.add_argument("--stdio", action="store_true", help="Serve over stdin/stdout (the default).")
-    parser.add_argument("--version", action="version", version=f"arkitekt-lsp {__version__}")
+    parser.add_argument(
+        "--stdio", action="store_true", help="Serve over stdin/stdout (the default)."
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"arkitekt-lsp {__version__}"
+    )
     parser.add_argument(
         "--connect",
         action="store_true",
@@ -1110,4 +1334,11 @@ def main() -> None:
     server.start_io()
 
 
-__all__ = ["ArkitektLanguageServer", "CheckKey", "Settings", "main", "project_root", "server"]
+__all__ = [
+    "ArkitektLanguageServer",
+    "CheckKey",
+    "Settings",
+    "main",
+    "project_root",
+    "server",
+]

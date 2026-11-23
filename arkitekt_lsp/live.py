@@ -29,7 +29,11 @@ from arkitekt_spec.blok.catalogs import (
     is_catalog_target,
     known_catalog,
 )
-from arkitekt_spec.blok.catalogs.fetch import CatalogUnavailable, cache_file, resolve_catalog
+from arkitekt_spec.blok.catalogs.fetch import (
+    CatalogUnavailable,
+    cache_file,
+    resolve_catalog,
+)
 from arkitekt_spec.blok.vocabulary import BlokError, load_vocabulary
 from arkitekt_spec.declare.blok.validate import BlokScope, check_blok_tree, place
 
@@ -82,12 +86,20 @@ def view_for(catalog: str | None) -> BlokView:
                 _unavailable.add(catalog)
         else:
             _unavailable.add(catalog)
-    return blok_view(catalog) if known_catalog(catalog) is not None else blok_view(complete=False)
+    return (
+        blok_view(catalog)
+        if known_catalog(catalog) is not None
+        else blok_view(complete=False)
+    )
 
 
 def is_address(catalog: object) -> bool:
     """Whether ``catalog`` is the address a catalog is published at: the only kind that is pulled."""
-    return isinstance(catalog, str) and is_catalog_target(catalog) and load_vocabulary().catalog_id.fullmatch(catalog) is not None
+    return (
+        isinstance(catalog, str)
+        and is_catalog_target(catalog)
+        and load_vocabulary().catalog_id.fullmatch(catalog) is not None
+    )
 
 
 def forget_unavailable() -> None:
@@ -106,7 +118,9 @@ def published_catalogs(identifier: str, *, refresh: bool = False) -> list[str]:
         CatalogUnavailable: If ``identifier`` is no address, or it cannot be had.
     """
     if not is_address(identifier):
-        raise CatalogUnavailable(f"{identifier!r} is not the address a catalog is published at (https://...)")
+        raise CatalogUnavailable(
+            f"{identifier!r} is not the address a catalog is published at (https://...)"
+        )
     if known_catalog(identifier) is None:
         try:
             resolve_catalog(identifier, refresh=refresh, timeout=PULL_TIMEOUT)
@@ -124,11 +138,15 @@ def published_catalogs(identifier: str, *, refresh: bool = False) -> list[str]:
         try:
             texts.append(cache_file(catalog.id).read_text(encoding="utf-8"))
         except OSError as error:
-            raise CatalogUnavailable(f"the catalog {catalog.id!r} is known but its published copy is not kept") from error
+            raise CatalogUnavailable(
+                f"the catalog {catalog.id!r} is known but its published copy is not kept"
+            ) from error
     return texts
 
 
-def live_findings(literal: BlokLiteral, scope: Mapping[str, Any] | None = None) -> list[LiveFinding]:
+def live_findings(
+    literal: BlokLiteral, scope: Mapping[str, Any] | None = None
+) -> list[LiveFinding]:
     """What the language and the blok's catalog find in ``literal``, without the app.
 
     Without ``scope`` it is checked mounted nowhere; with one (where the last check said it is
@@ -146,7 +164,10 @@ def live_findings(literal: BlokLiteral, scope: Mapping[str, Any] | None = None) 
         where = {"line": error.line, "column": error.column, "node": error.node}
         return [
             LiveFinding(
-                span=place_in_literal(literal, {key: value for key, value in where.items() if value is not None}),
+                span=place_in_literal(
+                    literal,
+                    {key: value for key, value in where.items() if value is not None},
+                ),
                 level="error",
                 code=error.code,
                 message=error.message,
@@ -156,7 +177,9 @@ def live_findings(literal: BlokLiteral, scope: Mapping[str, Any] | None = None) 
     # Every finding, errors too. Mounted nowhere, the checker leaves what a mount provides alone.
     checked = to_blok_scope(scope) if scope is not None else BlokScope()
     told = _judged_by_scope
-    findings = [place(finding, spans) for finding in check_blok_tree(tree, checked, view)]
+    findings = [
+        place(finding, spans) for finding in check_blok_tree(tree, checked, view)
+    ]
     placed: list[LiveFinding] = []
     for finding in findings:
         if not told(finding.code):
@@ -164,7 +187,10 @@ def live_findings(literal: BlokLiteral, scope: Mapping[str, Any] | None = None) 
         where = {"line": finding.line, "column": finding.column, "node": finding.path}
         placed.append(
             LiveFinding(
-                span=place_in_literal(literal, {key: value for key, value in where.items() if value is not None}),
+                span=place_in_literal(
+                    literal,
+                    {key: value for key, value in where.items() if value is not None},
+                ),
                 level=finding.level,
                 code=finding.code,
                 message=finding.message,

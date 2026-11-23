@@ -59,7 +59,9 @@ def _token_at(value: str, index: int) -> tuple[int, int]:
     return (index, min(len(value), index + 1) if index < len(value) else index)
 
 
-def _in_statement(source_lines: Sequence[str], call_line: int, literal: BlokLiteral) -> bool:
+def _in_statement(
+    source_lines: Sequence[str], call_line: int, literal: BlokLiteral
+) -> bool:
     """Whether ``literal`` is an argument of the statement that starts at ``call_line``: no line
     between them starts a new top-level statement (or closes the call at column 0)."""
     if literal.line < call_line:
@@ -147,12 +149,20 @@ def place(
     about_blok = any(key in diagnostic for key in ("blok", "code", "node", "line"))
     if about_blok:
         blok_source = bloks.get(blok) if isinstance(blok, str) else None
-        if blok_source is not None and not any(literal.value == blok_source for literal in literals):
+        if blok_source is not None and not any(
+            literal.value == blok_source for literal in literals
+        ):
             if blok in located:
                 return None  # edited since the check: what it found there is stale
-            return line_span(source, call_line)  # never a literal of this file: where it was declared
+            return line_span(
+                source, call_line
+            )  # never a literal of this file: where it was declared
         literal = find_literal(
-            source, literals, call_line, blok_source, _blok_context(blok if isinstance(blok, str) else None)
+            source,
+            literals,
+            call_line,
+            blok_source,
+            _blok_context(blok if isinstance(blok, str) else None),
         )
         if literal is not None:
             return place_in_literal(literal, diagnostic)

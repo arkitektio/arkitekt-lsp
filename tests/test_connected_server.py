@@ -36,7 +36,10 @@ SOURCE = (
     "\n"
     f"app.blok('panel', '{BLOK}')\n"
 )
-DEPENDENCY = {"key": "lab", "action_dependencies": [{"key": "ping", "demand": {"key": "ping"}}]}
+DEPENDENCY = {
+    "key": "lab",
+    "action_dependencies": [{"key": "ping", "demand": {"key": "ping"}}],
+}
 
 
 class FakeConnection:
@@ -53,13 +56,17 @@ class FakeConnection:
 
 
 @pytest.fixture
-def served(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[ArkitektLanguageServer, str, list[Any]]:
+def served(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[ArkitektLanguageServer, str, list[Any]]:
     file = tmp_path / "app.py"
     file.write_text(SOURCE)
     uri = file.as_uri()
     ls = ArkitektLanguageServer()
     workspace = Workspace(tmp_path.as_uri(), types.TextDocumentSyncKind.Incremental)
-    workspace.put_text_document(types.TextDocumentItem(uri=uri, language_id="python", version=1, text=SOURCE))
+    workspace.put_text_document(
+        types.TextDocumentItem(uri=uri, language_id="python", version=1, text=SOURCE)
+    )
     published: list[Any] = []
     monkeypatch.setattr(ls.protocol, "_workspace", workspace, raising=False)
     monkeypatch.setattr(ls, "text_document_publish_diagnostics", published.append)
@@ -76,10 +83,16 @@ def served(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[ArkitektLan
                 "source": BLOK,
                 "file": str(file),
                 "call_line": 4,
-                "scope": {"kinds": ["action", "assign"], "dependencies": [DEPENDENCY], "args": []},
+                "scope": {
+                    "kinds": ["action", "assign"],
+                    "dependencies": [DEPENDENCY],
+                    "args": [],
+                },
             }
         ],
-        "protocols": [{"name": "Lab", "file": str(file), "line": 1, "dependency": DEPENDENCY}],
+        "protocols": [
+            {"name": "Lab", "file": str(file), "line": 1, "dependency": DEPENDENCY}
+        ],
     }
     state = CheckState(report=report, last_good=report)
     state.anchors = ls.anchor(report)
@@ -110,7 +123,8 @@ def test_without_a_connection_there_is_no_lens_and_no_hover(served: Any) -> None
 
     assert code_lens(ls, _lens_params(uri)) == []
     params = types.HoverParams(
-        text_document=types.TextDocumentIdentifier(uri=uri), position=types.Position(line=0, character=7)
+        text_document=types.TextDocumentIdentifier(uri=uri),
+        position=types.Position(line=0, character=7),
     )
     assert asyncio.run(hover(ls, params)) is None
 
@@ -132,7 +146,9 @@ def test_nobody_satisfying_it_is_a_warning_at_its_name(served: Any) -> None:
 
     asyncio.run(ls.ask_about(_state(ls)))
 
-    told = [d for params in published for d in params.diagnostics if d.source == "rekuest"]
+    told = [
+        d for params in published for d in params.diagnostics if d.source == "rekuest"
+    ]
     assert told, "the warning reached the editor"
     assert told[-1].severity == types.DiagnosticSeverity.Warning
     assert (told[-1].range.start.line, told[-1].range.start.character) == (0, 6)
@@ -149,7 +165,8 @@ def test_a_check_that_fails_keeps_what_the_last_good_one_said(served: Any) -> No
     assert code_lens(ls, _lens_params(uri)), "the lens stays"
     character = SOURCE.splitlines()[3].index("deps.lab") + 6
     params = types.HoverParams(
-        text_document=types.TextDocumentIdentifier(uri=uri), position=types.Position(line=3, character=character)
+        text_document=types.TextDocumentIdentifier(uri=uri),
+        position=types.Position(line=3, character=character),
     )
     assert asyncio.run(hover(ls, params)) is not None, "the blok keeps its scope"
 
@@ -176,21 +193,25 @@ def test_hovering_the_protocol_lists_the_agents(served: Any) -> None:
     asyncio.run(ls.ask_about(_state(ls)))
 
     params = types.HoverParams(
-        text_document=types.TextDocumentIdentifier(uri=uri), position=types.Position(line=0, character=7)
+        text_document=types.TextDocumentIdentifier(uri=uri),
+        position=types.Position(line=0, character=7),
     )
     answer = asyncio.run(hover(ls, params))
 
     assert answer is not None and "`a`" in answer.contents.value
 
 
-def test_hovering_a_dependency_in_a_blok_asks_about_what_its_scope_says(served: Any) -> None:
+def test_hovering_a_dependency_in_a_blok_asks_about_what_its_scope_says(
+    served: Any,
+) -> None:
     ls, uri, _ = served
     connection = FakeConnection(TWO)
     ls.connection = connection
 
     character = SOURCE.splitlines()[3].index("deps.lab") + 6
     params = types.HoverParams(
-        text_document=types.TextDocumentIdentifier(uri=uri), position=types.Position(line=3, character=character)
+        text_document=types.TextDocumentIdentifier(uri=uri),
+        position=types.Position(line=3, character=character),
     )
     answer = asyncio.run(hover(ls, params))
 
@@ -204,7 +225,14 @@ class FakeLogin:
     actions = False
     made: list["FakeLogin"] = []
 
-    def __init__(self, url: str, status: Any, login: Any, version: str = "0", actions: bool = False) -> None:
+    def __init__(
+        self,
+        url: str,
+        status: Any,
+        login: Any,
+        version: str = "0",
+        actions: bool = False,
+    ) -> None:
         self.url, self.connected, self.pending, self.stopped = url, False, None, False
         FakeLogin.made.append(self)
 
@@ -234,10 +262,14 @@ def test_logging_in_after_a_failure_tries_again_where_the_settings_alone_would_n
     assert len(FakeLogin.made) == 2 and FakeLogin.made[0].stopped
 
 
-def test_logging_out_ends_the_run_before_it_forgets_the_login(served: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_logging_out_ends_the_run_before_it_forgets_the_login(
+    served: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     ls, _, _ = served
     told: list[tuple[str, Any]] = []
-    monkeypatch.setattr(ls.protocol, "notify", lambda method, params: told.append((method, params)))
+    monkeypatch.setattr(
+        ls.protocol, "notify", lambda method, params: told.append((method, params))
+    )
     connection = FakeLogin("https://hub", None, None)
     ls.connection = connection
     ls.settings.connect, ls.settings.server_url = True, "https://hub"
@@ -254,13 +286,19 @@ def test_logging_out_ends_the_run_before_it_forgets_the_login(served: Any, monke
     assert told[-1][1]["state"] == "off"
 
 
-def test_a_client_that_shows_the_login_is_told_the_challenge(served: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_client_that_shows_the_login_is_told_the_challenge(
+    served: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     ls, _, _ = served
     told: list[tuple[str, Any]] = []
-    monkeypatch.setattr(ls.protocol, "notify", lambda method, params: told.append((method, params)))
+    monkeypatch.setattr(
+        ls.protocol, "notify", lambda method, params: told.append((method, params))
+    )
     ls.settings.update({"clientShowsLogin": True})
     challenge = SimpleNamespace(
-        user_code="AB-CD", verification_uri_complete="https://hub/ok?code=AB-CD", expires_in=600
+        user_code="AB-CD",
+        verification_uri_complete="https://hub/ok?code=AB-CD",
+        expires_in=600,
     )
 
     asyncio.run(ls.show_login(challenge))
@@ -268,7 +306,12 @@ def test_a_client_that_shows_the_login_is_told_the_challenge(served: Any, monkey
     assert told == [
         (
             "arkitekt/rekuest/challenge",
-            {"url": DEFAULT_URL, "code": "AB-CD", "link": "https://hub/ok?code=AB-CD", "expiresIn": 600},
+            {
+                "url": DEFAULT_URL,
+                "code": "AB-CD",
+                "link": "https://hub/ok?code=AB-CD",
+                "expiresIn": 600,
+            },
         )
     ]
 
@@ -281,7 +324,11 @@ def test_a_pick_of_what_an_agent_offers_becomes_an_edit_of_the_file(
     file.write_text(source)
     ls = ArkitektLanguageServer()
     workspace = Workspace(tmp_path.as_uri(), types.TextDocumentSyncKind.Incremental)
-    workspace.put_text_document(types.TextDocumentItem(uri=file.as_uri(), language_id="python", version=1, text=source))
+    workspace.put_text_document(
+        types.TextDocumentItem(
+            uri=file.as_uri(), language_id="python", version=1, text=source
+        )
+    )
     monkeypatch.setattr(ls.protocol, "_workspace", workspace, raising=False)
     applied: list[Any] = []
 
@@ -309,15 +356,27 @@ def test_a_pick_of_what_an_agent_offers_becomes_an_edit_of_the_file(
 
     listed = asyncio.run(rekuest_offers(ls, SimpleNamespace(uri=file.as_uri())))
     (agent,) = listed["agents"]
-    assert (agent["className"], agent["actions"][0]["signature"]) == ("MicroscopeStage", "home()")
+    assert (agent["className"], agent["actions"][0]["signature"]) == (
+        "MicroscopeStage",
+        "home()",
+    )
 
-    pick = SimpleNamespace(uri=file.as_uri(), agent="7", className="MicroscopeStage", actions=["home"], states=[])
+    pick = SimpleNamespace(
+        uri=file.as_uri(),
+        agent="7",
+        className="MicroscopeStage",
+        actions=["home"],
+        states=[],
+    )
     answer = asyncio.run(rekuest_declare(ls, pick))
 
     (edit,) = applied
     texts = "".join(change.new_text for change in edit.edit.changes[file.as_uri()])
     assert "error" not in answer
-    assert '@app.declare(app="microscope-stage")\nclass MicroscopeStage(Protocol):' in texts
+    assert (
+        '@app.declare(app="microscope-stage")\nclass MicroscopeStage(Protocol):'
+        in texts
+    )
     assert "from typing import Protocol" in texts
 
 
@@ -327,10 +386,14 @@ def test_the_f_string_warning_follows_its_setting(served: Any, tmp_path: Path) -
     text = 'app.blok("panel", f"<Blok>{parts}</Blok>")\n'
     file.write_text(text)
     uri = file.as_uri()
-    ls.workspace.put_text_document(types.TextDocumentItem(uri=uri, language_id="python", version=1, text=text))
+    ls.workspace.put_text_document(
+        types.TextDocumentItem(uri=uri, language_id="python", version=1, text=text)
+    )
 
     ls.refresh(uri)
-    assert [diagnostic.code for diagnostic in published[-1].diagnostics] == ["blok.generated"]
+    assert [diagnostic.code for diagnostic in published[-1].diagnostics] == [
+        "blok.generated"
+    ]
 
     ls.settings.update({"check": {"warnOnFStrings": False}})
     ls.refresh(uri)
@@ -339,7 +402,12 @@ def test_the_f_string_warning_follows_its_setting(served: Any, tmp_path: Path) -
 
 def test_a_forwarded_query_cannot_change_anything_whatever_the_page_sent() -> None:
     """The page is not trusted to keep to reads: the refusal is here, before any client is asked."""
-    connection = Connection("https://example", lambda *_, **__: None, None, actions=True)  # type: ignore[arg-type]
+    connection = Connection(
+        "https://example",
+        lambda *_, **__: None,
+        None,  # type: ignore[arg-type]
+        actions=True,
+    )
     connection.runtime = object()  # any client it asked for would fail on this
 
     with pytest.raises(ActionsUnavailable, match="never a mutation"):
@@ -348,12 +416,23 @@ def test_a_forwarded_query_cannot_change_anything_whatever_the_page_sent() -> No
 
 def test_the_lens_says_whether_an_action_can_run() -> None:
     assert "Not on the server" in action_lens_title(None)
-    assert "no agent connected" in action_lens_title({"implementations": [{"agent": {"connected": False}}]})
-    assert action_lens_title({"implementations": [{"agent": {"connected": True}}]}) == "$(play) Run · 1 agent"
+    assert "no agent connected" in action_lens_title(
+        {"implementations": [{"agent": {"connected": False}}]}
+    )
+    assert (
+        action_lens_title({"implementations": [{"agent": {"connected": True}}]})
+        == "$(play) Run · 1 agent"
+    )
 
 
 def test_pins_only_travel_with_the_implementation_they_are_for() -> None:
-    pins = [{"key": "stage", "autoResolve": False, "mappedAgents": [{"key": "stage", "agent": "7"}]}]
+    pins = [
+        {
+            "key": "stage",
+            "autoResolve": False,
+            "mappedAgents": [{"key": "stage", "agent": "7"}],
+        }
+    ]
 
     pinned = assign_input("abc", {"x": 1}, "ref", "12", pins)
     assert pinned["implementation"] == "12" and pinned["dependencies"] == pins

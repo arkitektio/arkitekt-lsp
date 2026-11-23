@@ -18,47 +18,105 @@ SLIDR = BLOK.splitlines()[1].index("<Slidr") + 1
 """The column of `<Slidr` on line 2 of the BSX (the text starts with a newline)."""
 
 
-def _place(diagnostic: dict[str, object], source: str = SOURCE, bloks: dict[str, str] | None = None) -> str | None:
-    span = place(diagnostic, source, blok_literals(source), {"panel": BLOK} if bloks is None else bloks)
+def _place(
+    diagnostic: dict[str, object],
+    source: str = SOURCE,
+    bloks: dict[str, str] | None = None,
+) -> str | None:
+    span = place(
+        diagnostic,
+        source,
+        blok_literals(source),
+        {"panel": BLOK} if bloks is None else bloks,
+    )
     return None if span is None else source[span[0] : span[1]]
 
 
 def test_a_finding_about_a_node_is_placed_at_its_tag() -> None:
-    finding = {"call_line": 4, "blok": "panel", "code": "catalog.unknown_component", "node": "Blok[0]/Card[0]/Slidr[0]"}
+    finding = {
+        "call_line": 4,
+        "blok": "panel",
+        "code": "catalog.unknown_component",
+        "node": "Blok[0]/Card[0]/Slidr[0]",
+    }
 
     assert _place(finding) == "<Slidr"
 
 
 def test_a_finding_with_a_line_and_column_is_placed_there() -> None:
-    assert _place({"call_line": 4, "blok": "panel", "code": "bsx.syntax", "line": 2, "column": SLIDR}) == "<Slidr"
+    assert (
+        _place(
+            {
+                "call_line": 4,
+                "blok": "panel",
+                "code": "bsx.syntax",
+                "line": 2,
+                "column": SLIDR,
+            }
+        )
+        == "<Slidr"
+    )
 
 
 def test_a_finding_follows_its_blok_when_the_code_above_moves() -> None:
     moved = SOURCE.replace("app = App(", "# a comment\n\n\napp = App(")
 
-    assert _place({"call_line": 4, "blok": "panel", "code": "bsx.syntax", "line": 2, "column": SLIDR}, moved) == "<Slidr"
+    assert (
+        _place(
+            {
+                "call_line": 4,
+                "blok": "panel",
+                "code": "bsx.syntax",
+                "line": 2,
+                "column": SLIDR,
+            },
+            moved,
+        )
+        == "<Slidr"
+    )
 
 
 def test_a_finding_about_a_blok_edited_since_is_dropped() -> None:
     edited = SOURCE.replace("<Slidr />", "<Slider />")
     finding = {"call_line": 4, "blok": "panel", "code": "catalog.unknown_component"}
 
-    assert place(finding, edited, blok_literals(edited), {"panel": BLOK}, located={"panel"}) is None
+    assert (
+        place(
+            finding, edited, blok_literals(edited), {"panel": BLOK}, located={"panel"}
+        )
+        is None
+    )
 
 
 def test_a_blok_that_was_never_a_literal_is_told_at_its_declaring_line() -> None:
-    dedented = SOURCE.replace('app.blok(\n    "panel",\n    """', 'app.blok(\n    "panel",\n    dedent("""').replace(
-        '""",\n)', '"""),\n)'
-    )
+    dedented = SOURCE.replace(
+        'app.blok(\n    "panel",\n    """', 'app.blok(\n    "panel",\n    dedent("""'
+    ).replace('""",\n)', '"""),\n)')
     finding = {"call_line": 4, "blok": "panel", "code": "catalog.unknown_component"}
-    span = place(finding, dedented, blok_literals(dedented), {"panel": BLOK.strip() + "\n"})
+    span = place(
+        finding, dedented, blok_literals(dedented), {"panel": BLOK.strip() + "\n"}
+    )
 
     assert span is not None and dedented[span[0] : span[1]] == "app.blok("
 
 
 def test_a_refusal_about_no_listed_blok_goes_to_the_declaring_statement() -> None:
-    assert _place({"call_line": 4, "code": "catalog.unknown_component", "line": 2, "column": SLIDR}, bloks={}) == "<Slidr"
+    assert (
+        _place(
+            {
+                "call_line": 4,
+                "code": "catalog.unknown_component",
+                "line": 2,
+                "column": SLIDR,
+            },
+            bloks={},
+        )
+        == "<Slidr"
+    )
 
 
 def test_a_finding_about_no_blok_goes_to_its_line() -> None:
-    assert _place({"call_line": 2, "message": "TypeError: no"}) == 'app = App("checked", "1.0")'
+    assert (
+        _place({"call_line": 2, "message": "TypeError: no"})
+        == 'app = App("checked", "1.0")'
+    )
