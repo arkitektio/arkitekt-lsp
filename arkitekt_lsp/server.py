@@ -77,6 +77,7 @@ from arkitekt_lsp.live import (
 from arkitekt_lsp.placement import Span, place
 from arkitekt_lsp.regions import BlokLiteral, blok_literals, generated_bloks
 from arkitekt_lsp.scopes import Anchors, anchor_bloks, blok_of
+from arkitekt_lsp.selfrefs import find, self_path_at, target_of
 
 logger = logging.getLogger(__name__)
 
@@ -435,6 +436,13 @@ class ArkitektLanguageServer(LanguageServer):
         self, path: str, literals: list[BlokLiteral], index: int
     ) -> tuple[str, dict[str, Any]] | None:
         """The blok the ``index``-th literal of the file at real ``path`` is and its scope, if a check saw it."""
+        known = self.known_blok(path, literals, index)
+        return (known[0], known[1]["scope"]) if known is not None else None
+
+    def known_blok(
+        self, path: str, literals: list[BlokLiteral], index: int
+    ) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
+        """That blok, its record and the report it is in."""
         for state in self.checks.values():
             if state.last_good is None:
                 continue
@@ -448,7 +456,53 @@ class ArkitektLanguageServer(LanguageServer):
             }
             key = blok_of(literals, index, (state.anchors or {}).get(path), sources)
             if key is not None and key in records:
-                return key, records[key]["scope"]
+                return key, records[key], state.last_good
+        return None
+
+    def self_reference(
+        self, uri: str, position: types.Position
+    ) -> tuple[types.Location, str, types.Range] | None:
+        """What the ``self.…`` segment at ``position`` names: where, a hover of it, and the segment's range."""
+        fs_path = to_fs_path(uri)
+        if fs_path is None:
+            return None
+        document = self.workspace.get_text_document(uri)
+        offset = document.offset_at_position(position)
+        path = os.path.realpath(fs_path)
+        literals = blok_literals(document.source)
+        for index, literal in enumerate(literals):
+            inside = literal.to_value(offset)
+            at = self_path_at(literal.value, inside) if inside is not None else None
+            known = self.known_blok(path, literals, index) if at is not None else None
+            target = (
+                target_of(known[2], at)
+                if known is not None and at is not None
+                else None
+            )
+            if target is None or at is None:
+                continue
+            uri_of = from_fs_path(target.file)
+            if uri_of is None:
+                return None
+            declared = self.workspace.get_text_document(uri_of)
+            try:
+                found = find(declared.source, target)
+            except OSError:  # moved or deleted since the check
+                return None
+            if found is None:
+                return None
+            location = types.Location(
+                uri=uri_of,
+                range=types.Range(
+                    start=declared.client_position_at_offset(found.start),
+                    end=declared.client_position_at_offset(found.end),
+                ),
+            )
+            segment = types.Range(
+                start=document.client_position_at_offset(literal.to_source(at.span[0])),
+                end=document.client_position_at_offset(literal.to_source(at.span[1])),
+            )
+            return location, found.hover, segment
         return None
 
     # -- the server (connected only)
@@ -1033,7 +1087,15 @@ def code_lens(
 async def hover(
     ls: ArkitektLanguageServer, params: types.HoverParams
 ) -> types.Hover | None:
-    """On a protocol's name or a blok's ``deps.<key>``: the agents that would satisfy it."""
+    """On a blok's ``self.…``: what it names. On a protocol's name or a ``deps.<key>``: the agents that would satisfy it."""
+    found = ls.self_reference(params.text_document.uri, params.position)
+    if found is not None:
+        return types.Hover(
+            contents=types.MarkupContent(
+                kind=types.MarkupKind.Markdown, value=found[1]
+            ),
+            range=found[2],
+        )
     connection = ls.connection
     fs_path = to_fs_path(params.text_document.uri)
     if connection is None or fs_path is None:
@@ -1072,6 +1134,15 @@ async def hover(
                 )
             )
     return None
+
+
+@server.feature(types.TEXT_DOCUMENT_DEFINITION)
+def definition(
+    ls: ArkitektLanguageServer, params: types.DefinitionParams
+) -> types.Location | None:
+    """A blok's ``self.<state>``, ``self.<state>.<field>``, ``self.<action>``: the Python that declares it."""
+    found = ls.self_reference(params.text_document.uri, params.position)
+    return found[0] if found is not None else None
 
 
 @server.feature(REKUEST_REFRESH)
