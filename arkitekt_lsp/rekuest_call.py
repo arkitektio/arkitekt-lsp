@@ -8,17 +8,14 @@ polling over http: no socket has to stay open for an editor that may sit idle fo
 
 from collections.abc import Mapping
 from importlib import resources
-from typing import Annotated, Any, ClassVar
+from typing import Annotated, Any, ClassVar, Self
 
-from arkitekt import App, AppRegistry
+from arkitekt import App, client
 from fakts import Alias, Require, TokenLoader
-from fakts.contrib.rath.auth import FaktsAuthLink
 from koil.composition import Composition
-from rath.links.aiohttp import AIOHttpLink
-from rath.links.compose import compose
 from rath.rath import Rath
 
-from arkitekt_lsp.rekuest_read import IDENTIFIER, rekuest_read
+from arkitekt_lsp.rekuest_read import IDENTIFIER, RekuestRead, http_rath
 
 ACTIONS_IDENTIFIER = f"{IDENTIFIER}.actions"
 
@@ -68,10 +65,22 @@ class QueriedClient(Composition):
         return dict(result.data)
 
 
+@client()
 class RekuestCall(QueriedClient):
     """Rekuest, for the panel: read an action, start it as a root task and follow it, nothing else."""
 
     __scopes__: ClassVar[tuple[str, ...]] = ("rekuest_read", "rekuest_root_call")
+
+    @classmethod
+    def from_fakts(
+        cls,
+        rekuest: Annotated[
+            Alias,
+            Require("live.arkitekt.rekuest", "Where your apps' actions are called"),
+        ],
+        tokens: TokenLoader,
+    ) -> Self:
+        return cls(rath=http_rath(rekuest, tokens))
 
     async def aaction(self, action_hash: str) -> dict[str, Any] | None:
         document = (
@@ -94,47 +103,24 @@ class RekuestCall(QueriedClient):
         return list(answer["events"])
 
 
+@client()
 class MikroRead(QueriedClient):
     """Mikro, read-only: what a picker lists."""
 
     __scopes__: ClassVar[tuple[str, ...]] = ("mikro_read",)
 
-
-def _rath(alias: Alias, tokens: TokenLoader) -> Rath:
-    return Rath(
-        link=compose(
-            FaktsAuthLink(token_loader=tokens),
-            AIOHttpLink(
-                endpoint_url=alias.to_http_path("graphql"),
-                proxy=alias.proxy,
-                ssl_context=alias.ssl_context(),
+    @classmethod
+    def from_fakts(
+        cls,
+        mikro: Annotated[
+            Alias,
+            Require(
+                "live.arkitekt.mikro", "Where the images an action's pickers list are"
             ),
-        )
-    )
-
-
-registry = AppRegistry()
-
-
-@registry.service()
-def rekuest_call(
-    rekuest: Annotated[
-        Alias, Require("live.arkitekt.rekuest", "Where your apps' actions are called")
-    ],
-    tokens: TokenLoader,
-) -> RekuestCall:
-    return RekuestCall(rath=_rath(rekuest, tokens))
-
-
-@registry.service()
-def mikro_read(
-    mikro: Annotated[
-        Alias,
-        Require("live.arkitekt.mikro", "Where the images an action's pickers list are"),
-    ],
-    tokens: TokenLoader,
-) -> MikroRead:
-    return MikroRead(rath=_rath(mikro, tokens))
+        ],
+        tokens: TokenLoader,
+    ) -> Self:
+        return cls(rath=http_rath(mikro, tokens))
 
 
 SERVICES: dict[str, type[QueriedClient]] = {"rekuest": RekuestCall, "mikro": MikroRead}
@@ -144,7 +130,7 @@ SERVICES: dict[str, type[QueriedClient]] = {"rekuest": RekuestCall, "mikro": Mik
 def actions_app(version: str = "0.0.0") -> App[Any]:
     """The app the language server logs in as when it may call: still no agent, nothing it offers."""
     return App(
-        ACTIONS_IDENTIFIER, version, services=[rekuest_read, rekuest_call, mikro_read]
+        ACTIONS_IDENTIFIER, version, clients=[RekuestRead, RekuestCall, MikroRead]
     )
 
 

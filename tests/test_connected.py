@@ -180,7 +180,7 @@ def test_the_login_asks_for_reading_rekuest_and_nothing_else() -> None:
     app = lsp_app()
 
     assert app.scopes == ["openid", "rekuest_read"]
-    assert app.services == ["rekuest_read"]
+    assert list(app.declaration().clients) == ["rekuest_read"]
 
 
 def test_a_local_server_loads_nothing_it_would_connect_with() -> None:
