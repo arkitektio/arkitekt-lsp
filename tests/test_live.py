@@ -32,7 +32,7 @@ def test_what_its_mount_provides_waits_for_the_check() -> None:
     assert (
         _found(
             _source(
-                "<Card><Text text={deps.nowhere.x} /></Card>",
+                "<Card><Text text={agents.nowhere.x} /></Card>",
                 'kind="custom" context="panel"',
             )
         )
