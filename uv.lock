@@ -221,7 +221,7 @@ wheels = [
 
 [[package]]
 name = "arkitekt"
-version = "19.0.0"
+version = "19.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -240,9 +240,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "watchfiles" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/79/99/830f2b2e9649421de1e4a860edc29cd343129feaf33b377cf40918b7a2a2/arkitekt-19.0.0.tar.gz", hash = "sha256:e8f13e94de2b49555d8163404ecd889e0af45eb1a544b5c0dcef9cf6ca1a6fb2", size = 225324, upload-time = "2026-11-25T14:53:34.861Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3e/47/bfb7c64a2f065b090d8cfe76e33e0b1e8c9283575919391fdd012f44bd0c/arkitekt-19.1.0.tar.gz", hash = "sha256:81e5eee1e19f553efc8bb4c9afa33ff41241022b050d132e954a4c0cc71590cd", size = 225706, upload-time = "2026-11-26T13:15:54.008Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ff/f0/970d57627a691f87d746968d7bcffe6155dee8a8d39143cb17dd68f6076e/arkitekt-19.0.0-py3-none-any.whl", hash = "sha256:27226a77d74918e5fb16306e6c2ab97cc339c5360125a045e1769da29cd5ddb6", size = 276709, upload-time = "2026-11-25T14:53:33.653Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/be/0edbfc091b0e9db348f23ae3a11c2f60ff9f91d2629bfa8a21025e55c54c/arkitekt-19.1.0-py3-none-any.whl", hash = "sha256:8b26c24deba4c94127a4811c37e407f5cc34bffc4704c678e0f775ec6fc225a0", size = 277094, upload-time = "2026-11-26T13:15:52.495Z" },
 ]
 
 [[package]]
@@ -268,8 +268,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "arkitekt", specifier = ">=19" },
-    { name = "arkitekt-spec", specifier = ">=14.1" },
+    { name = "arkitekt", specifier = ">=19.1" },
+    { name = "arkitekt-spec", specifier = ">=14.2" },
     { name = "fakts", specifier = ">=6.1" },
     { name = "koil", specifier = ">=3.3.6" },
     { name = "pygls", specifier = ">=2.1" },
@@ -302,7 +302,7 @@ wheels = [
 
 [[package]]
 name = "arkitekt-spec"
-version = "14.1.0"
+version = "14.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "certifi" },
@@ -312,9 +312,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f6/e7/6230c39e75a2a591552eb9ce74bc113bbf054cdd12f32bf9c4eebb492bde/arkitekt_spec-14.1.0.tar.gz", hash = "sha256:bc355fd09dba92f787a61fb42e4fa8f5a4980e16c984873fe334554d8afaa7b0", size = 407464, upload-time = "2026-11-25T13:22:18.108Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/59/8c/a2e2ee11e22f63bfc95594b5d55d7591b96ebeb1f379d9b44e3dbc6094c9/arkitekt_spec-14.2.0.tar.gz", hash = "sha256:bbf9ae636ce9e07c6e8c20028e2b01d41f27d6325a6f07ec27e05b5e2d3182f6", size = 408323, upload-time = "2026-11-26T13:02:29.889Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9e/31/b3e92e9e14f36f8afb7df3774860c4661712ca7e5279e6c898ac1ccc12de/arkitekt_spec-14.1.0-py3-none-any.whl", hash = "sha256:bfd580bd32cf5ba2aaf57196f735010b3ef1dd35e52cc190c0efe3ace2cf3971", size = 467457, upload-time = "2026-11-25T13:22:17.052Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/0a/d48cb29c02d6f1eb04724bd5e33d96a24bbe1b716fe3d3a2cac2a4b8ec56/arkitekt_spec-14.2.0-py3-none-any.whl", hash = "sha256:da1cd6d9495e7406eb91c2c6c6a16a4c2cac44ed10289491cc85f4a9bbc520b3", size = 468329, upload-time = "2026-11-26T13:02:28.798Z" },
 ]
 
 [[package]]
