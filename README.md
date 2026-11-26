@@ -87,6 +87,9 @@ Python fills it in once, when the app starts, so it can't follow the app as it r
 `<foreach>` and `<if>` can. `arkitekt check` still checks what it evaluates to. The warning is the
 editor's, because a check only ever sees the finished string.
 
+A `.bsx` file the app reads (`app.blok("panel", Path("panel.bsx"))`) is checked against the app
+like a blok literal; saving it checks the app again. Any other `.bsx` file is checked on its own.
+
 Besides the standard protocol it answers `bsx/regions` (`{textDocument: {uri}}` →
 `{regions: [{start, end, value, root, context, kind, exact}]}`), the blok literals of a document,
 which the VS Code extension uses to complete BSX inside Python strings. It notifies

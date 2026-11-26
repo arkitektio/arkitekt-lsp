@@ -183,6 +183,30 @@ def _header_of(value: str) -> dict[str, str]:
     }
 
 
+def is_bsx(path: str) -> bool:
+    """Whether ``path`` is a ``.bsx`` file: one blok, its whole text."""
+    return path.endswith(".bsx")
+
+
+def literals_of(path: str, source: str) -> list[BlokLiteral]:
+    """The bloks of the file at ``path``: a ``.bsx`` file's whole text, a Python file's literals."""
+    if not is_bsx(path):
+        return blok_literals(source)
+    header = _header_of(source)
+    kind = header.get("kind")
+    return [
+        BlokLiteral(
+            start=0,
+            end=len(source),
+            line=1,
+            value=source,
+            root=_root_of(source) or blok_component(),
+            context=load_vocabulary().blok.contexts.get(header.get("context", "")),
+            kind=kind if kind in load_vocabulary().kinds else None,
+        )
+    ]
+
+
 def blok_literals(source: str) -> list[BlokLiteral]:
     """Every string literal of ``source`` that holds a blok, in source order."""
     starts = _line_starts(source)
@@ -292,4 +316,11 @@ def generated_bloks(source: str) -> list[tuple[int, int]]:
     return sorted(found)
 
 
-__all__ = ["BlokLiteral", "blok_component", "blok_literals", "generated_bloks"]
+__all__ = [
+    "is_bsx",
+    "literals_of",
+    "BlokLiteral",
+    "blok_component",
+    "blok_literals",
+    "generated_bloks",
+]

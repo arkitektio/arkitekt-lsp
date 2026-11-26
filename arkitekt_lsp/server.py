@@ -11,6 +11,8 @@ It runs in the app's own environment (the editor starts that environment's ``ark
   against the scope the check said it has (:mod:`.scopes`): its literal stays anchored to its blok.
 - ``bsx/regions`` hands a client the blok literals of a document, each with its blok's scope when a
   check has seen it, for what it does in them itself (an editor's completion).
+- A ``.bsx`` file is one blok: read by the app (``app.blok(name, Path(...))``), it is checked
+  against it like a literal; saving it checks the app the last check found reading it.
 
 All of that is local. Only with ``--connect`` (``arkitekt.server.connect``) does it also ask rekuest,
 read-only, who would satisfy each dependency the app declares (:mod:`.connected`): a count above the
@@ -74,8 +76,14 @@ from arkitekt_lsp.live import (
     live_findings,
     published_catalogs,
 )
-from arkitekt_lsp.placement import Span, place
-from arkitekt_lsp.regions import BlokLiteral, blok_literals, generated_bloks
+from arkitekt_lsp.placement import Span, place, place_in_literal
+from arkitekt_lsp.regions import (
+    BlokLiteral,
+    blok_literals,
+    generated_bloks,
+    is_bsx,
+    literals_of,
+)
 from arkitekt_lsp.scopes import Anchors, anchor_bloks, blok_of
 from arkitekt_lsp.selfrefs import find, self_path_at, target_of
 
@@ -235,6 +243,32 @@ class CheckState:
     generation: int = 0
 
 
+def bsx_file_of(found: dict[str, Any], report: dict[str, Any]) -> str | None:
+    """The ``.bsx`` file (real path) a report diagnostic is about: its own, else its blok's."""
+    file = found.get("bsx_file")
+    if not file:
+        file = next(
+            (
+                blok.get("bsx_file")
+                for blok in report.get("bloks", [])
+                if blok.get("blok") == found.get("blok")
+            ),
+            None,
+        )
+    return os.path.realpath(file) if isinstance(file, str) and file else None
+
+
+def bsx_files(report: dict[str, Any]) -> set[str]:
+    """Every ``.bsx`` file (real path) a report names."""
+    files = {bsx_file_of(found, report) for found in report.get("diagnostics", [])}
+    files |= {
+        os.path.realpath(blok["bsx_file"])
+        for blok in report.get("bloks", [])
+        if blok.get("bsx_file")
+    }
+    return {file for file in files if file}
+
+
 class ArkitektLanguageServer(LanguageServer):
     """See the module: the check, its placement and the live layer, for one editor."""
 
@@ -271,15 +305,26 @@ class ArkitektLanguageServer(LanguageServer):
     def check_key(self, uri: str) -> CheckKey | None:
         """The app the file at ``uri`` belongs to, or None when it belongs to none this knows of."""
         fs_path = to_fs_path(uri)
-        if fs_path is None or not fs_path.endswith(".py"):
+        if fs_path is None or not (fs_path.endswith(".py") or is_bsx(fs_path)):
             return None
         path = Path(fs_path).resolve()
+        if is_bsx(fs_path):
+            # The app a check found reading it; else the project's.
+            for key, state in self.checks.items():
+                if str(path) in bsx_files(state.report or {}) | bsx_files(
+                    state.last_good or {}
+                ):
+                    return key
         root = project_root(path, self.folders())
         try:
             text = self.workspace.get_text_document(uri).source
         except OSError:
             return None
-        if DECLARES_APP.search(text) and path.is_relative_to(root):
+        if (
+            not is_bsx(fs_path)
+            and DECLARES_APP.search(text)
+            and path.is_relative_to(root)
+        ):
             relative = path.relative_to(root).as_posix()
             if self.settings.target and names_file(self.settings.target, relative):
                 return CheckKey(str(root), self.settings.target)
@@ -443,6 +488,13 @@ class ArkitektLanguageServer(LanguageServer):
         self, path: str, literals: list[BlokLiteral], index: int
     ) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
         """That blok, its record and the report it is in."""
+        if is_bsx(path):
+            for state in self.checks.values():
+                for blok in (state.last_good or {}).get("bloks", []):
+                    file = blok.get("bsx_file")
+                    if "scope" in blok and file and os.path.realpath(file) == path:
+                        return blok["blok"], blok, state.last_good or {}
+            return None
         for state in self.checks.values():
             if state.last_good is None:
                 continue
@@ -469,7 +521,7 @@ class ArkitektLanguageServer(LanguageServer):
         document = self.workspace.get_text_document(uri)
         offset = document.offset_at_position(position)
         path = os.path.realpath(fs_path)
-        literals = blok_literals(document.source)
+        literals = literals_of(path, document.source)
         for index, literal in enumerate(literals):
             inside = literal.to_value(offset)
             at = self_path_at(literal.value, inside) if inside is not None else None
@@ -824,7 +876,7 @@ class ArkitektLanguageServer(LanguageServer):
         diagnostics: list[types.Diagnostic] = []
         if text is not None:
             path = os.path.realpath(fs_path)
-            literals = blok_literals(text)
+            literals = literals_of(path, text)
             told: set[tuple[str | None, Span]] = set()
             checked: set[str] = set()
             for state in self.checks.values():
@@ -837,15 +889,25 @@ class ArkitektLanguageServer(LanguageServer):
                 }
                 checked.update(bloks.values())
                 for found in state.report.get("diagnostics", []):
-                    if not found.get("file") or os.path.realpath(found["file"]) != path:
-                        continue
-                    span = place(
-                        found,
-                        text,
-                        literals,
-                        bloks,
-                        (state.located or {}).get(path, ()),
-                    )
+                    bsx_file = bsx_file_of(found, state.report)
+                    if is_bsx(path):
+                        if bsx_file != path:
+                            continue
+                        checked_as = bloks.get(found.get("blok", ""))
+                        if checked_as is not None and checked_as != text:
+                            continue  # edited since the check
+                        span: Span | None = place_in_literal(literals[0], found)
+                    else:
+                        file = found.get("file")
+                        if bsx_file or not file or os.path.realpath(file) != path:
+                            continue
+                        span = place(
+                            found,
+                            text,
+                            literals,
+                            bloks,
+                            (state.located or {}).get(path, ()),
+                        )
                     if span is None:
                         continue
                     told.add((found.get("code"), span))
@@ -861,7 +923,7 @@ class ArkitektLanguageServer(LanguageServer):
                         )
                     )
             if self.is_open(uri):
-                if self.settings.warn_on_fstrings:
+                if self.settings.warn_on_fstrings and not is_bsx(path):
                     for span in generated_bloks(text):
                         diagnostics.append(
                             self.diagnostic(
@@ -878,6 +940,8 @@ class ArkitektLanguageServer(LanguageServer):
                     if literal.value in checked:
                         continue  # as the check saw it: the check has said it
                     known = self.scope_of(path, literals, index)
+                    if known is None and is_bsx(path):
+                        continue  # no app reads it: the editor checks it on its own
                     for finding in live_findings(
                         literal, known[1] if known is not None else None
                     ):
@@ -894,7 +958,9 @@ class ArkitektLanguageServer(LanguageServer):
                                 LIVE_SOURCE,
                             )
                         )
-            for span, protocol, answer in self.about_protocols(path, text):
+            for span, protocol, answer in (
+                () if is_bsx(path) else self.about_protocols(path, text)
+            ):
                 said = problem(protocol["dependency"], answer)
                 if said is not None:
                     diagnostics.append(
@@ -928,9 +994,10 @@ class ArkitektLanguageServer(LanguageServer):
             }
         )
         for state in self.checks.values():
-            for found in (state.report or {}).get("diagnostics", []):
-                if found.get("file"):
-                    uri = from_fs_path(found["file"])
+            report = state.report or {}
+            for found in report.get("diagnostics", []):
+                for file in (found.get("file"), bsx_file_of(found, report)):
+                    uri = from_fs_path(file) if file else None
                     if uri is not None:
                         uris.setdefault(unquote(uri), uri)
         for uri in uris.values():
@@ -956,7 +1023,11 @@ class ArkitektLanguageServer(LanguageServer):
         document = self.workspace.get_text_document(uri)
         fs_path = to_fs_path(uri)
         path = os.path.realpath(fs_path) if fs_path is not None else None
-        literals = blok_literals(document.source)
+        literals = (
+            literals_of(path, document.source)
+            if path is not None
+            else blok_literals(document.source)
+        )
         found: list[dict[str, object]] = []
         for index, literal in enumerate(literals):
             start = document.client_position_at_offset(literal.start)
@@ -1051,7 +1122,7 @@ def code_lens(
     """Above each protocol, how many agents would satisfy it. Nothing unless connected."""
     uri = params.text_document.uri
     fs_path = to_fs_path(uri)
-    if ls.connection is None or fs_path is None:
+    if ls.connection is None or fs_path is None or is_bsx(fs_path):
         return []
     document = ls.workspace.get_text_document(uri)
     lenses: list[types.CodeLens] = []
@@ -1103,7 +1174,9 @@ async def hover(
     document = ls.workspace.get_text_document(params.text_document.uri)
     offset = document.offset_at_position(params.position)
     path = os.path.realpath(fs_path)  # noqa: ASYNC240 -- resolving the open document's local path
-    for span, protocol, answer in ls.about_protocols(path, document.source):
+    for span, protocol, answer in (
+        () if is_bsx(path) else ls.about_protocols(path, document.source)
+    ):
         if span[0] <= offset <= span[1]:
             return types.Hover(
                 contents=types.MarkupContent(
@@ -1111,7 +1184,7 @@ async def hover(
                     value=hover_markdown(protocol["name"], answer),
                 )
             )
-    literals = blok_literals(document.source)
+    literals = literals_of(path, document.source)
     for index, literal in enumerate(literals):
         inside = literal.to_value(offset)
         key = dependency_key_at(literal.value, inside) if inside is not None else None

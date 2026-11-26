@@ -445,3 +445,50 @@ def test_pins_only_travel_with_the_implementation_they_are_for() -> None:
     # An action target has no dependencies of its own: the server would have nothing to bind them to.
     anywhere = assign_input("abc", {"x": 1}, "ref", None, pins)
     assert "implementation" not in anywhere and "dependencies" not in anywhere
+
+
+def test_a_bsx_file_the_app_reads_gets_its_findings_and_scope(
+    served: Served, tmp_path: Path
+) -> None:
+    ls, _, published = served
+    text = '<Blok kind="agent" context="panel">\n  <Text text={self.Gone.x} />\n</Blok>'
+    file = tmp_path / "panel.bsx"
+    file.write_text(text)
+    uri = file.as_uri()
+    ls.workspace.put_text_document(
+        types.TextDocumentItem(uri=uri, language_id="bsx", version=1, text=text)
+    )
+    state = _state(ls)
+    scope = {"kinds": ["agent"], "dependencies": [], "args": []}
+    report = {
+        **state.report,
+        "bloks": [
+            *state.report["bloks"],
+            {
+                "blok": "file_panel",
+                "source": text,
+                "bsx_file": str(file),
+                "scope": scope,
+            },
+        ],
+        "diagnostics": [
+            {
+                "level": "error",
+                "code": "deps.unknown_state",
+                "message": "no Gone",
+                "line": 2,
+                "column": 3,
+                "file": str(tmp_path / "app.py"),
+                "call_line": 9,
+                "bsx_file": str(file),
+            },
+        ],
+    }
+    state.report = state.last_good = report
+
+    ls.refresh(uri)
+    [diagnostic] = published[-1].diagnostics
+    assert published[-1].uri == uri
+    assert diagnostic.range.start == types.Position(line=1, character=2)
+    assert ls.regions(uri)[0]["scope"] == scope
+    assert ls.check_key(uri) == next(iter(ls.checks))
