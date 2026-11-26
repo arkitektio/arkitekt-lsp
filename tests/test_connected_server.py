@@ -459,6 +459,7 @@ def test_a_bsx_file_the_app_reads_gets_its_findings_and_scope(
         types.TextDocumentItem(uri=uri, language_id="bsx", version=1, text=text)
     )
     state = _state(ls)
+    assert state.report is not None
     scope = {"kinds": ["agent"], "dependencies": [], "args": []}
     report = {
         **state.report,
